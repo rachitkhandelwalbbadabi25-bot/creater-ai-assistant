@@ -1,0 +1,84 @@
+version: "3.9"
+
+# ════════════════════════════════════════════════════════════════════════════════
+# TERI AI Assistant — Docker Compose
+# ════════════════════════════════════════════════════════════════════════════════
+# Usage:
+#   docker compose up -d          → Start all services in background
+#   docker compose logs -f ollama → Watch Ollama logs
+#   docker compose down           → Stop everything
+#
+# After starting, pull the models Teri needs:
+#   docker exec -it teri-ollama ollama pull qwen2.5:14b
+#   docker exec -it teri-ollama ollama pull qwen2.5:3b
+#   docker exec -it teri-ollama ollama pull qwen2.5-coder:7b
+#   docker exec -it teri-ollama ollama pull nomic-embed-text
+# ════════════════════════════════════════════════════════════════════════════════
+
+services:
+  # ─── Ollama (Local LLM Server) ──────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: teri-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"             # Ollama API — matches OLLAMA_BASE_URL in .env
+    volumes:
+      - ollama_data:/root/.ollama # Persist downloaded models
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h     # Keep models hot in VRAM for 24 hours
+      - OLLAMA_NUM_PARALLEL=2     # Allow 2 concurrent inference requests
+      - OLLAMA_MAX_LOADED_MODELS=3 # Keep up to 3 models loaded simultaneously
+    # Uncomment below if you have an NVIDIA GPU:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  # ─── Open WebUI (Optional: Visual chat interface for Ollama) ─────────────────
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: teri-webui
+    restart: unless-stopped
+    ports:
+      - "8080:8080"               # Access at http://localhost:8080
+    volumes:
+      - webui_data:/app/backend/data
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_SECRET_KEY=change-this-in-production
+      - ENABLE_SIGNUP=false       # Disable public signups
+    depends_on:
+      ollama:
+        condition: service_healthy
+    profiles:
+      - webui                     # Only starts with: docker compose --profile webui up
+
+  # ─── Adminer (Optional: SQLite viewer) ───────────────────────────────────────
+  adminer:
+    image: adminer:latest
+    container_name: teri-adminer
+    restart: unless-stopped
+    ports:
+      - "8888:8080"               # Access at http://localhost:8888
+    profiles:
+      - debug                     # Only starts with: docker compose --profile debug up
+
+volumes:
+  ollama_data:
+    name: teri-ollama-models       # Named volume for Ollama model persistence
+  webui_data:
+    name: teri-webui-data
+
+networks:
+  default:
+    name: teri-network

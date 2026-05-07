@@ -1,0 +1,45 @@
+# ─── Bun Configuration for Teri AI Assistant ───────────────────────────────────
+# Ref: https://bun.sh/docs/runtime/bunfig
+
+[install]
+# Prefer exact versions for reproducibility
+exact = true
+
+# Cache directory for packages
+cache = "~/.bun/install/cache"
+
+# Auto-install peer dependencies
+peer = false
+
+# Use lockfile
+frozenLockfile = false
+
+[install.scopes]
+# Any private registry scopes would go here
+
+[run]
+# Default shell for bun run (uses system shell)
+shell = "system"
+
+[test]
+# Root directory for test files
+root = "./tests"
+
+# Test file patterns
+include = ["tests/**/*.test.ts", "src/**/*.test.ts"]
+
+# Timeout per test (ms)
+timeout = 15000
+
+# Coverage reporting
+coverage = true
+
+[test.coverage]
+include = ["src/**"]
+exclude = ["src/tui/**", "src/web/**"]
+reporter = ["text", "lcov"]
+dir = "./coverage"
+
+[env]
+# Load .env file automatically in all bun commands
+DOTENV_CONFIG_PATH = ".env"

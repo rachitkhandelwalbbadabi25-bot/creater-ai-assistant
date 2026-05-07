@@ -1,0 +1,76 @@
+{
+  "compilerOptions": {
+    // ─── Language & Target ──────────────────────────────────────────────────
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",  // Bun's preferred module resolution strategy
+    "lib": ["ESNext", "DOM"],
+
+    // ─── Strict Type Safety ─────────────────────────────────────────────────
+    "strict": true,                           // Enable all strict type checks
+    "noImplicitAny": true,                    // Error on implicit 'any' types
+    "strictNullChecks": true,                 // Null/undefined are not assignable to other types
+    "strictFunctionTypes": true,              // Strict checking of function types
+    "strictPropertyInitialization": true,     // Class properties must be initialized
+    "noUncheckedIndexedAccess": true,         // Array access returns T | undefined
+    "noImplicitReturns": true,                // All code paths must return a value
+    "noFallthroughCasesInSwitch": true,       // Disallow fallthrough in switch cases
+    "exactOptionalPropertyTypes": false,      // Keep false for ergonomics with optional props
+
+    // ─── Module & Path Resolution ───────────────────────────────────────────
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@config/*": ["src/config/*"],
+      "@llm/*": ["src/llm/*"],
+      "@memory/*": ["src/memory/*"],
+      "@emotion/*": ["src/emotion/*"],
+      "@graph/*": ["src/graph/*"],
+      "@tools/*": ["src/tools/*"],
+      "@proactive/*": ["src/proactive/*"],
+      "@voice/*": ["src/voice/*"],
+      "@skills/*": ["src/skills/*"],
+      "@tui/*": ["src/tui/*"],
+      "@bot/*": ["src/bot/*"],
+      "@utils/*": ["src/utils/*"]
+    },
+    "resolveJsonModule": true,               // Allow importing JSON files
+    "allowImportingTsExtensions": true,      // Import .ts files directly (Bun supports this)
+    "verbatimModuleSyntax": true,            // Preserve import/export syntax exactly
+
+    // ─── JSX (for Ink TUI with React) ──────────────────────────────────────
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+
+    // ─── Emit ───────────────────────────────────────────────────────────────
+    "noEmit": true,                          // Bun handles transpilation — TS only for type-checking
+    "declaration": false,
+    "sourceMap": true,
+    "inlineSources": true,
+
+    // ─── Interop ────────────────────────────────────────────────────────────
+    "esModuleInterop": true,                 // Allow default imports from CommonJS modules
+    "allowSyntheticDefaultImports": true,    // Allow 'import X from Y' for CJS modules
+    "forceConsistentCasingInFileNames": true,
+
+    // ─── Type Definitions ───────────────────────────────────────────────────
+    "types": ["bun-types", "node"],
+
+    // ─── Diagnostics & Dev Experience ───────────────────────────────────────
+    "skipLibCheck": true,                    // Skip type-checking .d.ts files for speed
+    "incremental": true,
+    "tsBuildInfoFile": ".tsbuildinfo"
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "tests/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "data",
+    "logs",
+    "src/skills/storage"
+  ]
+}

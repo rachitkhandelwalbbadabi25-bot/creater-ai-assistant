@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.bun/
+
+# Build output
+dist/
+.tsbuildinfo
+
+# Data & runtime
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/vectors/
+logs/*.log
+
+# Environment (NEVER commit real secrets)
+.env
+.env.local
+.env.production
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Coverage
+coverage/
+
+# Whisper models (large binaries)
+models/
+*.bin

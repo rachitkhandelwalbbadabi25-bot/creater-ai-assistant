@@ -48,6 +48,7 @@ export interface GraphState {
   // ── Context ─────────────────────────────────────────────────────────────────
   contextBlock: string;
   memoryRetrieved: boolean;
+  onToken?: (token: string) => void;
 }
 
 /** Create a fresh initial state for a new user message */

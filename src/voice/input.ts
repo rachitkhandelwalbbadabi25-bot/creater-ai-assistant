@@ -4,30 +4,28 @@
 
 import { env } from "@config/index.js";
 import { createLogger } from "@utils/logger.js";
+import recorder from "node-record-lpcm16";
+import { createWriteStream, unlinkSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 
 const log = createLogger("voice/input");
 
 /**
  * Transcribe an audio file to text using Whisper.
- * Requires whisper.cpp model to be downloaded separately.
  */
 export async function transcribeAudio(audioFilePath: string): Promise<string> {
-  if (!env.VOICE_ENABLED) {
-    log.warn("Voice is disabled — set VOICE_ENABLED=true in .env");
-    return "";
-  }
+  if (!env.VOICE_ENABLED) return "";
 
   log.info(`Transcribing: ${audioFilePath}`);
 
   try {
-    // Dynamic import — only loads when voice is enabled
     const { nodewhisper } = await import("nodejs-whisper");
     const result = await nodewhisper(audioFilePath, {
       modelName: env.WHISPER_MODEL,
       autoDownloadModelName: env.WHISPER_MODEL,
     });
     const text = typeof result === "string" ? result : String(result);
-    log.info(`Transcription: "${text.slice(0, 100)}..."`);
     return text.trim();
   } catch (e) {
     log.error("Transcription failed", e);
@@ -36,16 +34,37 @@ export async function transcribeAudio(audioFilePath: string): Promise<string> {
 }
 
 /**
- * Start recording from microphone and transcribe when done.
- * Returns the transcribed text.
+ * Start recording from microphone for a fixed duration or until silence.
  */
-export async function listenAndTranscribe(): Promise<string> {
+export async function listenAndTranscribe(durationSeconds = 5): Promise<string> {
   if (!env.VOICE_ENABLED) return "";
 
-  log.info("Listening for voice input...");
+  const tempFile = join(tmpdir(), `creater_input_${Date.now()}.wav`);
+  const fileStream = createWriteStream(tempFile);
 
-  // TODO: Implement mic recording → temp file → transcribe pipeline
-  // This requires node-microphone or record-to-file
-  log.warn("Live mic transcription not yet implemented");
-  return "";
+  log.info(`🎤 Listening for ${durationSeconds}s...`);
+
+  return new Promise((resolve) => {
+    const mic = recorder.record({
+      sampleRate: 16000,
+      threshold: 0,
+      recorder: "sox", // or "ffmpeg"
+    });
+
+    mic.stream().pipe(fileStream);
+
+    setTimeout(async () => {
+      mic.stop();
+      fileStream.end();
+      
+      log.info("Processing speech...");
+      const text = await transcribeAudio(tempFile);
+      
+      try {
+        unlinkSync(tempFile); // Cleanup
+      } catch {}
+      
+      resolve(text);
+    }, durationSeconds * 1000);
+  });
 }

@@ -39,13 +39,15 @@ const AGENTS: Record<string, AgentNode> = {
  */
 export async function processMessage(
   input: string,
-  channel: GraphState["channel"] = "tui"
+  channel: GraphState["channel"] = "tui",
+  onToken?: (token: string) => void
 ): Promise<string> {
   const startTime = Date.now();
 
   try {
     // ── Step 1: Initialize state ──────────────────────────────────────────────
     let state = createInitialState(input, channel);
+    state.onToken = onToken;
     log.info(`Processing: "${input.slice(0, 80)}..." [${channel}]`);
 
     // ── Step 2: Route (classify intent + emotion + memory) ────────────────────

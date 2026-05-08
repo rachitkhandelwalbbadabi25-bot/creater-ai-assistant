@@ -9,7 +9,7 @@ import { z } from "zod";
 const EnvSchema = z.object({
   // App Identity
   APP_NAME: z.string().default("Creater"),
-  APP_ENV: z.enum(["development", "production"]).default("development"),
+  APP_ENV: z.enum(["development", "production", "test"]).default("development"),
   APP_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   USER_NAME: z.string().default("Friend"),
   USER_TIMEZONE: z.string().default("Asia/Kolkata"),
@@ -38,6 +38,7 @@ const EnvSchema = z.object({
   WHISPER_MODEL: z.string().default("base"),
   PIPER_VOICE: z.string().default("en_US-lessac-medium"),
   WAKE_WORD: z.string().default("hey creater"),
+  PICOVOICE_ACCESS_KEY: z.string().default(""),
 
   // Proactive Scheduler
   PROACTIVE_ENABLED: z.coerce.boolean().default(true),

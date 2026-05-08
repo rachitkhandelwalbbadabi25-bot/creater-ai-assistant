@@ -23,7 +23,7 @@ const client = new Ollama({ host: env.OLLAMA_BASE_URL });
 export async function checkOllamaHealth(): Promise<Result<string[]>> {
   return safeAsync(async () => {
     const response = await withTimeout(client.list(), 5000, "Ollama health check");
-    const modelNames = response.models.map((m) => m.name);
+    const modelNames = (response as any).models.map((m: any) => m.name);
     log.info(`Ollama connected — ${modelNames.length} models available`, {
       models: modelNames,
     });
@@ -88,11 +88,11 @@ export async function chat(opts: ChatOptions): Promise<string> {
           options: opts.options,
           format: opts.format,
           stream: false,
-        } as ChatRequest),
+        } as any),
         env.OLLAMA_TIMEOUT_MS,
         `Chat with ${opts.model}`
       );
-      return result as ChatResponse;
+      return result as unknown as ChatResponse;
     },
     2,
     1000
@@ -127,7 +127,7 @@ export async function chatStream(
     messages: opts.messages,
     options: opts.options,
     stream: true,
-  } as ChatRequest);
+  } as any);
 
   let full = "";
   for await (const chunk of stream as AsyncIterable<ChatResponse>) {
@@ -156,7 +156,7 @@ export async function generate(
           prompt,
           options,
           stream: false,
-        } as GenerateRequest),
+        } as any),
         env.OLLAMA_TIMEOUT_MS,
         `Generate with ${model}`
       );
@@ -165,7 +165,7 @@ export async function generate(
     1000
   );
 
-  return (response as { response: string }).response?.trim() ?? "";
+  return (response as unknown as { response: string }).response?.trim() ?? "";
 }
 
 // ─── Embeddings ───────────────────────────────────────────────────────────────────
@@ -188,7 +188,7 @@ export async function embed(
       return await client.embed({
         model: embedModel,
         input,
-      } as EmbedRequest);
+      } as any);
     },
     2,
     500

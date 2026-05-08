@@ -43,7 +43,7 @@ export async function executeCommand(
   log.tool(`Executing: ${command.slice(0, 100)}`, { cwd, timeout });
 
   try {
-    const result = await $`${command.split(" ")}`.cwd(cwd).timeout(timeout).quiet().nothrow();
+    const result = await $`${command.split(" ")}`.cwd(cwd).quiet().nothrow();
     const duration = Date.now() - start;
 
     const execResult: ExecResult = {

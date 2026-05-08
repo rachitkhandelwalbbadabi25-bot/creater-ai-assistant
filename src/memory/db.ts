@@ -2,7 +2,7 @@
 // src/memory/db.ts — SQLite database initialization, schema, and migrations
 // ════════════════════════════════════════════════════════════════════════════════
 
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import { env } from "@config/index.js";
 import { createLogger } from "@utils/logger.js";
 import { mkdirSync, existsSync } from "fs";
@@ -21,9 +21,9 @@ if (!existsSync(dbDir)) {
 const db = new Database(env.SQLITE_DB_PATH);
 
 // Enable WAL mode for concurrent reads
-db.pragma("journal_mode = WAL");
-db.pragma("busy_timeout = 5000");
-db.pragma("foreign_keys = ON");
+db.exec("PRAGMA journal_mode = WAL");
+db.exec("PRAGMA busy_timeout = 5000");
+db.exec("PRAGMA foreign_keys = ON");
 
 log.info(`SQLite database initialized at ${env.SQLITE_DB_PATH}`);
 

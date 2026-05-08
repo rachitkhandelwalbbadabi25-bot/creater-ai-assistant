@@ -1,4 +1,4 @@
-# ─── Bun Configuration for Teri AI Assistant ───────────────────────────────────
+# ─── Bun Configuration for Creater AI Assistant ───────────────────────────────
 # Ref: https://bun.sh/docs/runtime/bunfig
 
 [install]
@@ -14,9 +14,6 @@ peer = false
 # Use lockfile
 frozenLockfile = false
 
-[install.scopes]
-# Any private registry scopes would go here
-
 [run]
 # Default shell for bun run (uses system shell)
 shell = "system"
@@ -30,9 +27,6 @@ include = ["tests/**/*.test.ts", "src/**/*.test.ts"]
 
 # Timeout per test (ms)
 timeout = 15000
-
-# Coverage reporting
-coverage = true
 
 [test.coverage]
 include = ["src/**"]

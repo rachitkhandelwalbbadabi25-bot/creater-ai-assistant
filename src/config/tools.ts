@@ -259,6 +259,5 @@ export function requiresConfirmation(
 ): boolean {
   if (tool.permission === "dangerous") return true;
   if (safetyMode === "strict" && tool.permission === "sensitive") return true;
-  if (safetyMode === "moderate" && tool.permission === "dangerous") return true;
   return false;
 }

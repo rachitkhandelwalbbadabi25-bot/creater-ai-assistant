@@ -13,13 +13,16 @@ const log = createLogger("tools/safety");
 const BLOCKED_COMMANDS = [
   /rm\s+-rf\s+\//, // rm -rf /
   /format\s+[a-z]:/i, // format C:
-  /del\s+\/s\s+\/q/i, // del /s /q (Windows recursive delete)
+  /del\s+.*\/s\s+/i, // del /s (Windows recursive delete)
+  /rd\s+.*\/s\s+/i,  // rd /s (Windows recursive directory delete)
   /mkfs\./,
   /dd\s+if=.*of=\/dev/,
   /shutdown/i,
   /reboot/i,
   /:(){ :\|:& };:/, // fork bomb
   />\s*\/dev\/sd/, // overwrite disk
+  /net\s+user\s+.*\/delete/i, // delete user
+  /net\s+localgroup\s+administrators\s+.*\/add/i, // add to admin
 ];
 
 const SUSPICIOUS_PATTERNS = [
@@ -32,6 +35,11 @@ const SUSPICIOUS_PATTERNS = [
   /del\s+\/f/i,
   /powershell.*-enc/i, // encoded powershell
   /reg\s+delete/i,
+  /taskkill\s+\/f/i,
+  /net\s+stop/i,
+  /sc\s+delete/i,
+  /attrib\s+-r/i,
+  /cmd\s+\/c/i,
 ];
 
 export type RiskLevel = "safe" | "low" | "medium" | "high" | "critical";

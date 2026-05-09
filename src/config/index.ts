@@ -5,6 +5,14 @@
 
 import { z } from "zod";
 
+const envBoolean = z.preprocess((v) => {
+  if (typeof v === "string") {
+    if (v.toLowerCase() === "true") return true;
+    if (v.toLowerCase() === "false") return false;
+  }
+  return v;
+}, z.coerce.boolean());
+
 // ─── Environment Schema (validated at startup) ──────────────────────────────────
 const EnvSchema = z.object({
   // App Identity
@@ -31,23 +39,24 @@ const EnvSchema = z.object({
   // Telegram
   TELEGRAM_BOT_TOKEN: z.string().default(""),
   TELEGRAM_ALLOWED_USERS: z.string().default(""),
-  TELEGRAM_ENABLED: z.coerce.boolean().default(false),
+  TELEGRAM_ENABLED: envBoolean.default(false),
 
   // Voice
-  VOICE_ENABLED: z.coerce.boolean().default(false),
+  VOICE_ENABLED: envBoolean.default(false),
   WHISPER_MODEL: z.string().default("base"),
   PIPER_VOICE: z.string().default("en_US-lessac-medium"),
   WAKE_WORD: z.string().default("hey creater"),
   PICOVOICE_ACCESS_KEY: z.string().default(""),
+  PICOVOICE_KEYWORD_PATH: z.string().default(""),
 
   // Proactive Scheduler
-  PROACTIVE_ENABLED: z.coerce.boolean().default(true),
+  PROACTIVE_ENABLED: envBoolean.default(true),
   MORNING_BRIEFING_CRON: z.string().default("0 7 * * *"),
   NIGHT_CHECK_CRON: z.string().default("0 22 * * *"),
   DEADLINE_CHECK_CRON: z.string().default("0 9,15 * * *"),
 
   // Browser
-  PLAYWRIGHT_HEADLESS: z.coerce.boolean().default(true),
+  PLAYWRIGHT_HEADLESS: envBoolean.default(true),
   PLAYWRIGHT_BROWSER: z.enum(["chromium", "firefox", "webkit"]).default("chromium"),
 
   // Safety
@@ -57,17 +66,17 @@ const EnvSchema = z.object({
 
   // Skills
   SKILLS_DIR: z.string().default("./src/skills/storage"),
-  AUTO_GENERATE_SKILLS: z.coerce.boolean().default(true),
+  AUTO_GENERATE_SKILLS: envBoolean.default(true),
 
   // Web Dashboard
   WEB_DASHBOARD_PORT: z.coerce.number().default(3000),
-  WEB_DASHBOARD_ENABLED: z.coerce.boolean().default(false),
+  WEB_DASHBOARD_ENABLED: envBoolean.default(false),
 
   // Debug
-  DEBUG_LLM_CALLS: z.coerce.boolean().default(false),
-  DEBUG_MEMORY: z.coerce.boolean().default(false),
-  DEBUG_TOOLS: z.coerce.boolean().default(false),
-  MOCK_LLM: z.coerce.boolean().default(false),
+  DEBUG_LLM_CALLS: envBoolean.default(false),
+  DEBUG_MEMORY: envBoolean.default(false),
+  DEBUG_TOOLS: envBoolean.default(false),
+  MOCK_LLM: envBoolean.default(false),
 });
 
 // ─── Parse and validate environment at module load ───────────────────────────────

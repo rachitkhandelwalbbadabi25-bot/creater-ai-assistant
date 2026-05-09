@@ -41,15 +41,19 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
     options: GenerationPresets.precise,
   });
 
-  // Check if tool execution requires confirmation
-  let needsConfirmation = false;
+  // Check for tool calls and execute if safe
+  let executionResults: any[] = [];
   try {
     const parsed = JSON.parse(response);
     if (parsed.tools?.length > 0) {
       for (const toolCall of parsed.tools) {
         const toolDef = TOOL_REGISTRY.find(t => t.id === toolCall.id);
-        if (toolDef && requiresConfirmation(toolDef, env.SAFETY_MODE as "strict" | "moderate" | "permissive")) {
-          needsConfirmation = true;
+        if (!toolDef) continue;
+
+        // Safety Check
+        const needsConfirm = requiresConfirmation(toolDef, env.SAFETY_MODE as "strict" | "moderate" | "permissive");
+        
+        if (needsConfirm) {
           return {
             ...state,
             requiresConfirmation: true,
@@ -62,10 +66,22 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
             currentStep: "responding",
           };
         }
+
+        // Execute safe tools
+        const result = await import("../tools/dispatcher.js").then(m => m.dispatchTool(toolCall.id, toolCall.params));
+        executionResults.push({ tool: toolCall.id, result });
+      }
+
+      // If we executed tools, generate a new response based on results
+      if (executionResults.length > 0) {
+        const resultResponse = `✅ Tools executed: ${executionResults.map(r => r.tool).join(", ")}\n\nResults:\n${JSON.stringify(executionResults, null, 2)}`;
+        addMessage("assistant", resultResponse, state.channel);
+        return { ...state, response: resultResponse, currentStep: "done" };
       }
     }
-  } catch {
-    // Response wasn't JSON — it's a direct text response, that's fine
+  } catch (err) {
+    // Response wasn't JSON or tool execution failed
+    if (err instanceof Error && err.name === "SafetyError") throw err;
   }
 
   addMessage("user", state.currentInput, state.channel, { intent: state.intent });

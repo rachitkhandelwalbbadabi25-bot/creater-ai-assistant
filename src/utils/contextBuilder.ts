@@ -25,12 +25,17 @@ export interface EmotionContext {
   recentMoods?: string[];
 }
 
+import type { SystemSnapshot } from "@tools/laptop/system.js";
+import type { Fact } from "@memory/longTerm.js";
+
 export interface MemoryContext {
   recentMessages: string[];
   relevantMemories: string[];
   activeProjects?: string[];
   pendingTasks?: string[];
   upcomingDeadlines?: string[];
+  systemStatus?: SystemSnapshot;
+  userProfileFacts?: Fact[];
 }
 
 export interface FullContext {
@@ -98,11 +103,29 @@ export function contextToString(ctx: FullContext, maxTokens = 2048): string {
     );
   }
 
+  // System status section (Laptop info)
+  if (ctx.memory.systemStatus) {
+    sections.push(
+      `\n[SYSTEM STATUS]`,
+      `OS: ${ctx.memory.systemStatus.os}`,
+      `CPU: ${ctx.memory.systemStatus.cpu.usage}% used`,
+      `RAM: ${ctx.memory.systemStatus.ram.usagePercent}% used (${ctx.memory.systemStatus.ram.used}/${ctx.memory.systemStatus.ram.total})`,
+      ctx.memory.systemStatus.battery ? `Battery: ${ctx.memory.systemStatus.battery.percent}% (${ctx.memory.systemStatus.battery.charging ? "Charging" : "Discharging"})` : "AC Power"
+    );
+  }
+
   // Memory section
   if (ctx.memory.relevantMemories.length > 0) {
     sections.push(
-      `\n[RELEVANT MEMORIES]`,
+      `\n[RELEVANT MEMORIES (RAG)]`,
       ...ctx.memory.relevantMemories.map((m, i) => `  ${i + 1}. ${m}`)
+    );
+  }
+
+  if (ctx.memory.userProfileFacts && ctx.memory.userProfileFacts.length > 0) {
+    sections.push(
+      `\n[USER PROFILE & FACTS]`,
+      ...ctx.memory.userProfileFacts.map(f => `  • ${f.key}: ${f.value}`)
     );
   }
 

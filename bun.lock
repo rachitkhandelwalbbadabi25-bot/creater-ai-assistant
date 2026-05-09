@@ -21,7 +21,7 @@
         "ink-text-input": "^5.0.1",
         "langchain": "^0.1.30",
         "nanoid": "^5.1.11",
-        "node-cron": "^3.0.3",
+        "node-cron": "4.2.1",
         "node-record-lpcm16": "1.0.1",
         "nodejs-whisper": "latest",
         "ollama": "^0.5.18",
@@ -41,7 +41,7 @@
         "@types/figlet": "^1.5.8",
         "@types/gradient-string": "^1.1.5",
         "@types/node": "^20.19.39",
-        "@types/node-cron": "^3.0.11",
+        "@types/node-cron": "3.0.11",
         "@types/react": "^18.3.28",
         "@types/react-dom": "^18.3.7",
         "bun-types": "latest",
@@ -614,7 +614,7 @@
 
     "node-addon-api": ["node-addon-api@6.1.0", "", {}, ""],
 
-    "node-cron": ["node-cron@3.0.3", "", { "dependencies": { "uuid": "8.3.2" } }, ""],
+    "node-cron": ["node-cron@4.2.1", "", {}, "sha512-lgimEHPE/QDgFlywTd8yTR61ptugX3Qer29efeyWw2rv259HtGBNn1vZVmp8lB9uo9wC0t/AT4iGqXxia+CJFg=="],
 
     "node-domexception": ["node-domexception@1.0.0", "", {}, ""],
 
@@ -919,8 +919,6 @@
     "langsmith/commander": ["commander@10.0.1", "", {}, ""],
 
     "langsmith/uuid": ["uuid@10.0.0", "", { "bin": "dist/bin/uuid" }, ""],
-
-    "node-cron/uuid": ["uuid@8.3.2", "", { "bin": "dist/bin/uuid" }, ""],
 
     "node-record-lpcm16/debug": ["debug@2.6.9", "", { "dependencies": { "ms": "2.0.0" } }, "sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA=="],
 

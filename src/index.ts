@@ -20,6 +20,7 @@ import { initVectorStore } from "@memory/vector.js";
 import { startScheduler, stopScheduler } from "@proactive/scheduler.js";
 import { startTelegramBot, stopTelegramBot } from "@bot/telegram.js";
 import { startTUI } from "@tui/app.js";
+import { startWakeWordDetection, stopWakeWordDetection } from "@voice/wakeWord.js";
 import { setupGlobalErrorHandler } from "@utils/errorHandler.js";
 import { log } from "@utils/logger.js";
 
@@ -71,11 +72,19 @@ async function main(): Promise<void> {
   // 6. Start Telegram bot (if enabled)
   startTelegramBot();
 
-  // 7. Calculate startup time
+  // 7. Start Voice Wake Word (if enabled)
+  if (env.VOICE_ENABLED) {
+    startWakeWordDetection(() => {
+      // Phase 1: Simple logging. Phase 2: Active chat integration.
+      log.info("🔔 Wake Word Detected! Try saying something in the terminal.");
+    }).catch(e => log.error("Voice startup failed", e));
+  }
+
+  // 8. Calculate startup time
   const elapsed = Date.now() - startTime;
   log.info(`✅ ${env.APP_NAME} ready in ${elapsed}ms`);
 
-  // 8. Start TUI (this blocks — it's the main interaction loop)
+  // 9. Start TUI (this blocks — it's the main interaction loop)
   startTUI();
 
   // ── Graceful Shutdown ───────────────────────────────────────────────────────
@@ -83,6 +92,7 @@ async function main(): Promise<void> {
     log.info("Shutting down...");
     stopScheduler();
     stopTelegramBot();
+    stopWakeWordDetection();
     log.info("Goodbye! 👋");
     process.exit(0);
   };

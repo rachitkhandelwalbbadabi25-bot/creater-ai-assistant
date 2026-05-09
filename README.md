@@ -48,12 +48,11 @@ User Input (TUI / Telegram / Voice)
               └─────────────┘
 ```
 
-### Model Routing Strategy
+### Model Strategy (Local Optimized)
 | Task Type | Model | Why |
 |-----------|-------|-----|
-| Routing, emotion, classification | `qwen2.5:3b` | Fast, low latency |
-| Reasoning, planning, briefings | `qwen2.5:14b` | High capability |
-| Code generation, debugging | `qwen2.5-coder:7b` | Code-optimized |
+| Reasoning & Routing | `qwen2.5-coder:7b` | High reasoning, fast locally |
+| Code & Execution | `qwen2.5-coder:7b` | Code-optimized |
 | Embeddings (memory) | `nomic-embed-text` | Efficient vectors |
 
 ---
@@ -63,7 +62,6 @@ User Input (TUI / Telegram / Voice)
 ### Prerequisites
 - [Bun](https://bun.sh) >= 1.1.0
 - [Ollama](https://ollama.ai) running locally
-- [Docker](https://docker.com) (optional, for Ollama container)
 
 ### 1. Install Dependencies
 ```bash
@@ -72,16 +70,14 @@ bun install
 
 ### 2. Pull Required Models
 ```bash
-ollama pull qwen2.5:3b
-ollama pull qwen2.5:14b
 ollama pull qwen2.5-coder:7b
 ollama pull nomic-embed-text
 ```
 
-### 3. Configure
+### 3. Run Diagnostic (Recommended)
+Check if your system is ready:
 ```bash
-# Edit .env with your preferences
-# At minimum, set USER_NAME
+bun run diagnostic.ts
 ```
 
 ### 4. Run

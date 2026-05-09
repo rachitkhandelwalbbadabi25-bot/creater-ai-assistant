@@ -1,0 +1,44 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./*"],
+      "@config/*": ["../../src/config/*"],
+      "@llm/*": ["../../src/llm/*"],
+      "@memory/*": ["../../src/memory/*"],
+      "@emotion/*": ["../../src/emotion/*"],
+      "@graph/*": ["../../src/graph/*"],
+      "@tools/*": ["../../src/tools/*"],
+      "@proactive/*": ["../../src/proactive/*"],
+      "@voice/*": ["../../src/voice/*"],
+      "@skills/*": ["../../src/skills/*"],
+      "@utils/*": ["../../src/utils/*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules"]
+}

@@ -3,7 +3,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 import React, { useState, useCallback, useEffect } from "react";
-import { render, Box, Text, useInput, useApp, Newline, Static } from "ink";
+import { render, Box, Text, useInput, useApp, Newline, Static, Transform } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
 import { processMessage } from "@graph/supervisor.js";
@@ -12,12 +12,47 @@ import { getAppStats, type AppStats } from "@utils/stats.js";
 import gradient from "gradient-string";
 import figlet from "figlet";
 import dayjs from "dayjs";
+import { voiceEvents } from "@voice/wakeWord.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────────
 interface ChatEntry {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: Date;
+}
+
+// ─── System Metrics Component ───────────────────────────────────────────────────
+function SystemMetrics() {
+  const [metrics, setMetrics] = useState({ cpu: 0, ram: 0, battery: 0 });
+
+  useEffect(() => {
+    const fetchMetrics = async () => {
+      try {
+        const { getSystemInfo } = await import("@tools/laptop/system.js");
+        const info = await getSystemInfo();
+        setMetrics({
+          cpu: info.cpu.usage,
+          ram: info.ram.usagePercent,
+          battery: info.battery?.percent ?? 100,
+        });
+      } catch (e) {}
+    };
+    fetchMetrics();
+    const timer = setInterval(fetchMetrics, 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <Box>
+      <Text color="gray"> [ </Text>
+      <Text color={metrics.cpu > 70 ? "red" : "green"}>CPU: {metrics.cpu}%</Text>
+      <Text color="gray"> | </Text>
+      <Text color={metrics.ram > 80 ? "red" : "blue"}>RAM: {metrics.ram}%</Text>
+      <Text color="gray"> | </Text>
+      <Text color={metrics.battery < 20 ? "red" : "yellow"}>BAT: {metrics.battery}%</Text>
+      <Text color="gray"> ]</Text>
+    </Box>
+  );
 }
 
 // ─── Main App Component ──────────────────────────────────────────────────────────
@@ -32,12 +67,27 @@ function CreaterApp() {
     },
   ]);
   const [isThinking, setIsThinking] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isProcessingSpeech, setIsProcessingSpeech] = useState(false);
+  const [listeningTimeLeft, setListeningTimeLeft] = useState(15);
   const [stats, setStats] = useState<AppStats>({
     messageCount: 0,
     factCount: 0,
     taskCount: 0,
-    lastMood: "Initializing",
+    lastMood: "Neutral",
   });
+
+  // Countdown Timer for Voice
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isListening) {
+      setListeningTimeLeft(15);
+      interval = setInterval(() => {
+        setListeningTimeLeft(prev => Math.max(0, prev - 1));
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isListening]);
 
   // Refresh stats periodically
   useEffect(() => {
@@ -47,31 +97,41 @@ function CreaterApp() {
     return () => clearInterval(timer);
   }, []);
 
+
   // Handle message submission
   const handleSubmit = useCallback(async (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
 
-    // Check for exit commands
-    if (["exit", "quit", "bye", "chal bye"].includes(trimmed.toLowerCase())) {
+    if (["exit", "quit", "bye"].includes(trimmed.toLowerCase())) {
       setMessages(prev => [...prev, {
         role: "assistant",
-        content: "👋 Bye bye! Take care yaar. Jab zaroorat ho, main hoon! 💛",
+        content: "👋 Bye bye! Take care yaar. 💛",
         timestamp: new Date(),
       }]);
-      setTimeout(() => exit(), 1500);
+      setTimeout(() => exit(), 1000);
       return;
     }
 
-    // Add user message
+    if (trimmed.toLowerCase().startsWith("/voice ")) {
+      const state = trimmed.split(" ")[1];
+      if (state === "on") {
+        import("@voice/wakeWord.js").then(m => m.startWakeWordDetection(() => {}));
+        setMessages(prev => [...prev, { role: "assistant", content: "🎙️ Voice detection started.", timestamp: new Date() }]);
+      } else if (state === "off") {
+        import("@voice/wakeWord.js").then(m => m.stopWakeWordDetection());
+        setMessages(prev => [...prev, { role: "assistant", content: "🔇 Voice detection stopped.", timestamp: new Date() }]);
+      }
+      setInput("");
+      return;
+    }
+
     setMessages((prev) => [...prev, { role: "user", content: trimmed, timestamp: new Date() }]);
     setInput("");
     setIsThinking(true);
 
     try {
       let streamingContent = "";
-      
-      // Temporary entry for streaming response
       setMessages((prev) => [...prev, { role: "assistant", content: "", timestamp: new Date() }]);
 
       const response = await processMessage(trimmed, "tui", (token) => {
@@ -86,13 +146,10 @@ function CreaterApp() {
         });
       });
       
-      // Final update to ensure consistency
       setMessages((prev) => {
         const updated = [...prev];
         const last = updated[updated.length - 1];
-        if (last && last.role === "assistant") {
-          last.content = response;
-        }
+        if (last && last.role === "assistant") last.content = response;
         return updated;
       });
     } catch {
@@ -103,72 +160,114 @@ function CreaterApp() {
       }]);
     } finally {
       setIsThinking(false);
-      setStats(getAppStats()); // Refresh stats after interaction
+      setStats(getAppStats());
     }
   }, [exit]);
 
-  // Global key bindings
+  // Listen to voice events
+  useEffect(() => {
+    const handleTranscribed = (text: string) => {
+      setIsProcessingSpeech(false);
+      handleSubmit(text);
+    };
+    
+    const handleWake = () => { setIsListening(true); setIsProcessingSpeech(false); };
+    const handleIdle = () => { setIsListening(false); setIsProcessingSpeech(false); };
+    const handleProcessing = () => { setIsListening(false); setIsProcessingSpeech(true); };
+
+    voiceEvents.on("wake", handleWake);
+    voiceEvents.on("idle", handleIdle);
+    voiceEvents.on("processing_speech", handleProcessing);
+    voiceEvents.on("transcribed", handleTranscribed);
+    
+    return () => {
+      voiceEvents.off("wake", handleWake);
+      voiceEvents.off("idle", handleIdle);
+      voiceEvents.off("processing_speech", handleProcessing);
+      voiceEvents.off("transcribed", handleTranscribed);
+    };
+  }, [handleSubmit]);
+
   useInput((input, key) => {
     if (key.ctrl && input === "c") exit();
   });
 
   return (
-    <Box flexDirection="column" padding={1} minHeight={15}>
-      {/* ─── Header & Status ────────────────────────────────────────────────── */}
-      <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="column">
-        <Box justifyContent="space-between">
-          <Text bold color="cyan">✨ CREATER AI ASSISTANT</Text>
-          <Text color="gray">v0.2.0 | Bun 1.3 | Ctrl+C to Exit</Text>
+    <Box flexDirection="column" paddingX={2} paddingY={1} minHeight={20}>
+      {/* ─── Header ────────────────────────────────────────────────────────── */}
+      <Box justifyContent="space-between" marginBottom={1}>
+        <Box>
+          <Text bold color="cyan">✨ {env.APP_NAME.toUpperCase()}</Text>
+          <Text color="gray"> | </Text>
+          <Text color="magenta">{stats.lastMood}</Text>
         </Box>
-        <Box marginTop={0}>
-          <Text color="yellow">👤 {env.USER_NAME}</Text>
-          <Text color="gray"> | </Text>
-          <Text color="green">📚 {stats.factCount} Facts</Text>
-          <Text color="gray"> | </Text>
-          <Text color="blue">📋 {stats.taskCount} Tasks</Text>
-          <Text color="gray"> | </Text>
-          <Text color="magenta">🎭 {stats.lastMood.toUpperCase()}</Text>
-        </Box>
+        <SystemMetrics />
       </Box>
 
-      <Newline />
+      {/* ─── Stats Bar ────────────────────────────────────────────────────── */}
+      <Box borderStyle="single" borderColor="gray" paddingX={1} justifyContent="space-around" marginBottom={1}>
+        <Text color="yellow">👤 {env.USER_NAME}</Text>
+        <Text color="green">📝 {stats.messageCount} Chats</Text>
+        <Text color="blue">🧠 {stats.factCount} Facts</Text>
+        <Text color="red">🎯 {stats.taskCount} Tasks</Text>
+      </Box>
 
-      {/* ─── Chat History ──────────────────────────────────────────────────── */}
-      <Box flexDirection="column" flexGrow={1} marginBottom={1} borderStyle="single" borderColor="gray" paddingX={1}>
+      {/* ─── Chat Window ──────────────────────────────────────────────────── */}
+      <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor="cyan" paddingX={1}>
         <Static items={messages}>
           {(msg: ChatEntry, i: number) => (
-            <Box key={i} marginBottom={1} flexDirection="column">
+            <Box key={i} flexDirection="column" marginBottom={1}>
               <Box>
-                <Text bold color={msg.role === "user" ? "white" : "cyan"}>
-                  {msg.role === "user" ? `👤 ${env.USER_NAME}` : "🤖 CREATER"}
+                <Text bold color={msg.role === "user" ? "magenta" : "cyan"}>
+                  {msg.role === "user" ? "USER" : "CREATER"}
                 </Text>
-                <Text color="gray"> • {dayjs(msg.timestamp).format("HH:mm")}</Text>
+                <Text color="gray"> [{dayjs(msg.timestamp).format("HH:mm")}]</Text>
               </Box>
               <Box paddingLeft={2}>
-                <Text>{msg.content}</Text>
+                <Text color={msg.role === "user" ? "white" : "cyanBright"}>{msg.content}</Text>
+              </Box>
+              <Box marginTop={0}>
+                <Text color="gray">{`─`.repeat(20)}</Text>
               </Box>
             </Box>
           )}
         </Static>
         
         {isThinking && (
-          <Box marginLeft={1} marginTop={1}>
+          <Box marginLeft={1}>
             <Text color="yellow">
-              <Spinner type="dots" /> <Text italic>Creater soch raha hai...</Text>
+              <Spinner type="dots" /> <Text italic>Soch raha hoon...</Text>
+            </Text>
+          </Box>
+        )}
+        {isListening && (
+          <Box marginLeft={1}>
+            <Text color="greenBright" bold>
+              <Spinner type="point" /> Listening for voice command... ({listeningTimeLeft}s)
+            </Text>
+          </Box>
+        )}
+        {isProcessingSpeech && (
+          <Box marginLeft={1}>
+            <Text color="yellowBright" bold>
+              <Spinner type="earth" /> Transcribing audio (Local STT)...
             </Text>
           </Box>
         )}
       </Box>
 
-      {/* ─── Input Box ─────────────────────────────────────────────────────── */}
-      <Box borderStyle="single" borderColor="cyan" paddingX={1}>
-        <Text color="cyan" bold>➜ </Text>
+      {/* ─── Input Area ───────────────────────────────────────────────────── */}
+      <Box marginTop={1}>
+        <Text color={isListening ? "greenBright" : "cyan"} bold>❯ </Text>
         <TextInput 
           value={input} 
           onChange={setInput} 
           onSubmit={handleSubmit} 
-          placeholder="Apna sawaal pucho (e.g. 'How are you yaar?')"
+          placeholder={isListening ? "Speak now..." : "Type something here..."}
         />
+      </Box>
+      <Box>
+        <Text color="gray" dimColor>Press Ctrl+C to Exit</Text>
       </Box>
     </Box>
   );
@@ -176,19 +275,15 @@ function CreaterApp() {
 
 // ─── Entry Point ──────────────────────────────────────────────────────────────────
 export function startTUI(): void {
-  // Check if we are in a TTY before starting
   if (!process.stdin.isTTY && env.APP_ENV !== "test") {
-    console.error("❌ Error: Creater TUI requires an interactive terminal.");
-    console.log("Tip: Try running in a real terminal, not a sub-shell or IDE output window.");
     process.exit(1);
   }
 
-  // Show splash banner
   try {
-    const banner = figlet.textSync("CREATER", { font: "Standard" });
+    const banner = figlet.textSync("CREATER", { font: "Small" });
     console.clear();
-    console.log(gradient.pastel.multiline(banner));
-    console.log(gradient.cristal("  ════════════ Your Personal AI Assistant ════════════\n"));
+    console.log(gradient(["cyan", "magenta"]).multiline(banner));
+    console.log(gradient.cristal("  ════════════ Premium AI Experience ════════════\n"));
   } catch {
     console.log("\n  ✨ Creater — Your Personal AI Assistant\n");
   }
@@ -196,7 +291,6 @@ export function startTUI(): void {
   render(<CreaterApp />);
 }
 
-// Run directly if executed as main
 if ((import.meta as any).main) {
   startTUI();
 }

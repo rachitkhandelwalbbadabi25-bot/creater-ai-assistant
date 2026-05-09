@@ -2,18 +2,18 @@
 // src/proactive/scheduler.ts — Cron-based proactive task scheduler
 // ════════════════════════════════════════════════════════════════════════════════
 
-import cron from "node-cron";
+import cron, { type ScheduledTask } from "node-cron";
 import { env } from "@config/index.js";
 import { generateMorningBriefing } from "./briefing.js";
 import { generateNightCheck } from "./nightCheck.js";
-import { checkDeadlines } from "./alerts.js";
+import { checkDeadlines, checkBatteryAlert, checkLateNightAlert } from "./alerts.js";
 import { runMemoryMaintenance } from "@memory/summarizer.js";
 import { persistLearnedPatterns } from "@emotion/learner.js";
 import { createLogger } from "@utils/logger.js";
 
 const log = createLogger("proactive/scheduler");
 
-const jobs: cron.ScheduledTask[] = [];
+const jobs: ScheduledTask[] = [];
 
 /**
  * Start all proactive scheduled jobs.
@@ -27,7 +27,7 @@ export function startScheduler(): void {
 
   log.info("Starting proactive scheduler...");
 
-  // Morning briefing
+  // 1. Morning briefing
   jobs.push(
     cron.schedule(env.MORNING_BRIEFING_CRON, async () => {
       log.info("⏰ Running morning briefing");
@@ -36,7 +36,7 @@ export function startScheduler(): void {
     }, { timezone: env.USER_TIMEZONE })
   );
 
-  // Night check-in
+  // 2. Night check-in
   jobs.push(
     cron.schedule(env.NIGHT_CHECK_CRON, async () => {
       log.info("🌙 Running night check-in");
@@ -45,7 +45,7 @@ export function startScheduler(): void {
     }, { timezone: env.USER_TIMEZONE })
   );
 
-  // Deadline alerts
+  // 3. Deadline alerts
   jobs.push(
     cron.schedule(env.DEADLINE_CHECK_CRON, async () => {
       log.info("📋 Checking deadlines");
@@ -54,7 +54,23 @@ export function startScheduler(): void {
     }, { timezone: env.USER_TIMEZONE })
   );
 
-  // Memory maintenance (every 2 hours)
+  // 4. Battery monitoring (every 30 mins)
+  jobs.push(
+    cron.schedule("*/30 * * * *", async () => {
+      try { await checkBatteryAlert(); }
+      catch (e) { log.error("Battery check failed", e); }
+    }, { timezone: env.USER_TIMEZONE })
+  );
+
+  // 5. Late night health check (every hour)
+  jobs.push(
+    cron.schedule("0 * * * *", () => {
+      try { checkLateNightAlert(); }
+      catch (e) { log.error("Late night check failed", e); }
+    }, { timezone: env.USER_TIMEZONE })
+  );
+
+  // 6. Memory maintenance (every 2 hours)
   jobs.push(
     cron.schedule("0 */2 * * *", async () => {
       log.info("🧠 Running memory maintenance");
@@ -63,7 +79,7 @@ export function startScheduler(): void {
     }, { timezone: env.USER_TIMEZONE })
   );
 
-  // Emotion pattern learning (daily at 2 AM)
+  // 7. Emotion pattern learning (daily at 2 AM)
   jobs.push(
     cron.schedule("0 2 * * *", () => {
       log.info("📊 Learning emotion patterns");

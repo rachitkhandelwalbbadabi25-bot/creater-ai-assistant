@@ -42,7 +42,7 @@ export function startTelegramBot(): void {
   bot.command("start", async (ctx) => {
     activeChatId = ctx.chat.id;
     await ctx.reply(
-      `👋 Hey! Main Creater hoon — tumhara personal AI assistant!\n\n` +
+      `👋 Hey! Main ${env.APP_NAME} hoon — tumhara personal AI assistant!\n\n` +
       `Mujhse kuch bhi poocho — Hindi, English, ya Hinglish mein.\n` +
       `Type /help for commands.`
     );
@@ -50,22 +50,69 @@ export function startTelegramBot(): void {
 
   bot.command("help", async (ctx) => {
     await ctx.reply(
-      `📋 **Commands:**\n` +
+      `📋 **Available Commands:**\n\n` +
       `/start — Start conversation\n` +
-      `/status — System status\n` +
-      `/briefing — Get morning briefing\n` +
+      `/status — Detailed system status\n` +
+      `/memory — View what I remember about you\n` +
+      `/briefing — Get your morning briefing now\n` +
       `/help — Show this message`
     );
   });
 
   bot.command("status", async (ctx) => {
-    await ctx.reply("✅ Creater is running! Sab theek hai.");
+    await ctx.replyWithChatAction("typing");
+    try {
+      const { getSystemInfo } = await import("@tools/laptop/system.js");
+      const sys = await getSystemInfo();
+      const status = 
+        `🖥️ **System Status:**\n\n` +
+        `• **CPU:** ${sys.cpu.usage}% (${sys.cpu.model})\n` +
+        `• **RAM:** ${sys.ram.usagePercent}% (${sys.ram.used}/${sys.ram.total})\n` +
+        `• **Battery:** ${sys.battery?.percent ?? "AC Power"}% ${sys.battery?.charging ? "(Charging)" : ""}\n` +
+        `• **Uptime:** ${Math.floor(process.uptime() / 60)} mins\n` +
+        `• **OS:** ${process.platform} (${process.arch})`;
+      await ctx.reply(status, { parse_mode: "Markdown" });
+    } catch (e) {
+      await ctx.reply("✅ Bot is online, but system stats fetch failed.");
+    }
+  });
+
+  bot.command("memory", async (ctx) => {
+    await ctx.replyWithChatAction("typing");
+    const { getTopSummaries } = await import("@memory/midTerm.js");
+    const { buildEmotionProfile } = await import("@emotion/personalMap.js");
+    
+    const summaries = getTopSummaries(3);
+    const emotion = buildEmotionProfile();
+    
+    const memMsg = 
+      `🧠 **Memory & Profile:**\n\n` +
+      `• **Current Vibe:** ${emotion}\n\n` +
+      `• **Recent Key Facts:**\n` +
+      (summaries.length ? summaries.map(s => `  - ${s.content.slice(0, 100)}...`).join("\n") : "  - No long-term facts stored yet.");
+      
+    await ctx.reply(memMsg, { parse_mode: "Markdown" });
   });
 
   bot.command("briefing", async (ctx) => {
-    await ctx.reply("⏳ Generating briefing...");
-    const response = await processMessage("give me my morning briefing", "telegram");
-    await ctx.reply(response);
+    await ctx.reply("⏳ Generating your morning briefing, please wait...");
+    await ctx.replyWithChatAction("typing");
+    const { generateMorningBriefing } = await import("@proactive/briefing.js");
+    const briefing = await generateMorningBriefing();
+    await ctx.reply(briefing, { parse_mode: "Markdown" });
+  });
+
+  bot.command("voice", async (ctx) => {
+    const args = ctx.message?.text.split(" ")[1]?.toLowerCase();
+    if (args === "on") {
+      import("@voice/wakeWord.js").then(m => m.startWakeWordDetection(() => {}));
+      await ctx.reply("🎙️ Background Voice Detection (Hey Creater) Started.");
+    } else if (args === "off") {
+      import("@voice/wakeWord.js").then(m => m.stopWakeWordDetection());
+      await ctx.reply("🔇 Background Voice Detection Stopped.");
+    } else {
+      await ctx.reply("ℹ️ Usage: `/voice on` or `/voice off`", { parse_mode: "Markdown" });
+    }
   });
 
   // ── Handle all text messages ────────────────────────────────────────────────
@@ -84,9 +131,18 @@ export function startTelegramBot(): void {
 
   // ── Register proactive delivery callbacks ───────────────────────────────────
   const sendProactive = async (message: string) => {
-    if (bot && activeChatId) {
-      try { await bot.api.sendMessage(activeChatId, message); }
-      catch (e) { log.warn("Failed to send proactive message", { error: String(e) }); }
+    if (!bot) return;
+    
+    // Send to current active chat if known
+    if (activeChatId) {
+      try { await bot.api.sendMessage(activeChatId, message, { parse_mode: "Markdown" }); }
+      catch (e) { log.warn("Failed to send proactive to active chat"); }
+    } else {
+      // Fallback: Send to all whitelisted users
+      for (const userId of allowedTelegramUsers) {
+        try { await bot.api.sendMessage(userId, message, { parse_mode: "Markdown" }); }
+        catch (e) { log.warn(`Failed to send proactive to user ${userId}`); }
+      }
     }
   };
 
@@ -96,7 +152,7 @@ export function startTelegramBot(): void {
 
   // ── Start polling ───────────────────────────────────────────────────────────
   bot.start({
-    onStart: () => log.info("Telegram bot started"),
+    onStart: (info) => log.info(`Telegram bot started as @${info.username}`),
   });
 
   log.info("Telegram bot initialized");

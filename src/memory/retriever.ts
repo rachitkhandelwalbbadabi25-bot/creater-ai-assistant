@@ -4,7 +4,7 @@
 
 import { getRecentMessages } from "./shortTerm.js";
 import { getTopSummaries, searchSummaries } from "./midTerm.js";
-import { searchFacts, buildUserProfile } from "./longTerm.js";
+import { searchFacts, buildUserProfile, getAllFacts } from "./longTerm.js";
 import { search as vectorSearch } from "./vector.js";
 import { createLogger } from "@utils/logger.js";
 import type { MemoryContext } from "@utils/contextBuilder.js";
@@ -82,8 +82,19 @@ export async function retrieveContext(
     }
   }
 
-  // ── 5. Deduplicate and limit ───────────────────────────────────────────────
-  relevantMemories = [...new Set(relevantMemories)].slice(0, 15);
+  // ── 5. System: current laptop stats ─────────────────────────────────────────
+  let systemStatus: any = undefined;
+  if (options.query.toLowerCase().includes("system") || options.query.toLowerCase().includes("laptop") || options.query.toLowerCase().includes("battery")) {
+    try {
+      const { getSystemInfo } = await import("@tools/laptop/system.js");
+      systemStatus = await getSystemInfo();
+    } catch (e) {
+      log.warn("Failed to fetch system info for context");
+    }
+  }
+
+  // ── 6. Profile: All known facts ──────────────────────────────────────────────
+  const userProfileFacts = getAllFacts();
 
   const context: MemoryContext = {
     recentMessages,
@@ -91,6 +102,8 @@ export async function retrieveContext(
     activeProjects: [],
     pendingTasks: [],
     upcomingDeadlines: [],
+    systemStatus,
+    userProfileFacts,
   };
 
   log.mem(`Retrieved context: ${recentMessages.length} recent, ${relevantMemories.length} relevant`);

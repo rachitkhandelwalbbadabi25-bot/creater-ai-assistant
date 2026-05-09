@@ -35,13 +35,39 @@ export async function checkDeadlines(): Promise<void> {
 
   if (overdue.length > 0) {
     const msg = `🚨 **Overdue Tasks:**\n${overdue.map(t => `  ❌ ${t.title} (due: ${t.due_date}) [${t.priority}]`).join("\n")}`;
-    log.warn(`${overdue.length} overdue tasks found`);
     if (alertCallback) alertCallback(msg);
   }
 
   if (upcoming.length > 0) {
     const msg = `⏰ **Due in 24 hours:**\n${upcoming.map(t => `  📌 ${t.title} (due: ${t.due_date})`).join("\n")}`;
-    log.info(`${upcoming.length} upcoming deadlines`);
+    if (alertCallback) alertCallback(msg);
+  }
+}
+
+/**
+ * Check for low battery and notify the user.
+ */
+export async function checkBatteryAlert(): Promise<void> {
+  try {
+    const { getSystemInfo } = await import("@tools/laptop/system.js");
+    const sys = await getSystemInfo();
+    
+    if (sys.battery && sys.battery.percent < 20 && !sys.battery.charging) {
+      const msg = `🪫 **Low Battery Alert:** Your laptop is at ${sys.battery.percent}%. Please plug in the charger soon!`;
+      if (alertCallback) alertCallback(msg);
+    }
+  } catch (e) {
+    log.error("Battery check failed", e);
+  }
+}
+
+/**
+ * Check if it's late night and suggest the user to rest.
+ */
+export function checkLateNightAlert(): void {
+  const hour = new Date().getHours();
+  if (hour >= 23 || hour <= 4) {
+    const msg = "🌙 **Late Night Alert:** It's getting late. Make sure to get some rest! I'm here if you need me, but sleep is important.";
     if (alertCallback) alertCallback(msg);
   }
 }

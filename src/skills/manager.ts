@@ -1,65 +1,54 @@
 // ════════════════════════════════════════════════════════════════════════════════
-// src/skills/manager.ts — Load, execute, and manage user-defined skills
+// src/skills/manager.ts — Load and manage skills stored in Markdown files
 // ════════════════════════════════════════════════════════════════════════════════
 
-import { db } from "@memory/db.js";
+import { readFileSync, writeFileSync, readdirSync, existsSync } from "fs";
+import { join } from "path";
 import { createLogger } from "@utils/logger.js";
-import { generateId } from "@utils/helpers.js";
 
 const log = createLogger("skills/manager");
+const STORAGE_DIR = join(process.cwd(), "src/skills/storage");
 
 export interface Skill {
-  id: string;
   name: string;
   description: string;
-  triggerPatterns: string[];
-  steps: unknown[];
-  usageCount: number;
-  lastUsedAt: string | null;
-  createdAt: string;
+  triggers: string[];
+  steps: string[];
+  fileName: string;
 }
 
-const insertStmt = db.prepare(`
-  INSERT INTO skills (id, name, description, trigger_patterns, steps)
-  VALUES (?, ?, ?, ?, ?)
-`);
-const allStmt = db.prepare(`SELECT * FROM skills ORDER BY usage_count DESC`);
-const findStmt = db.prepare(`SELECT * FROM skills WHERE name = ?`);
-const bumpStmt = db.prepare(`
-  UPDATE skills SET usage_count = usage_count + 1, last_used_at = datetime('now') WHERE id = ?
-`);
+/**
+ * Load all skills from the storage directory.
+ */
+export function loadAllSkills(): Skill[] {
+  if (!existsSync(STORAGE_DIR)) return [];
 
-export function registerSkill(
-  name: string, description: string,
-  triggerPatterns: string[], steps: unknown[]
-): Skill {
-  const id = generateId();
-  insertStmt.run(id, name, description, JSON.stringify(triggerPatterns), JSON.stringify(steps));
-  log.info(`Skill registered: ${name}`);
-  return { id, name, description, triggerPatterns, steps, usageCount: 0, lastUsedAt: null, createdAt: "" };
+  const files = readdirSync(STORAGE_DIR).filter(f => f.endsWith(".md"));
+  const skills: Skill[] = [];
+
+  for (const file of files) {
+    try {
+      const content = readFileSync(join(STORAGE_DIR, file), "utf-8");
+      const skill = parseSkillMarkdown(content, file);
+      if (skill) skills.push(skill);
+    } catch (e) {
+      log.error(`Failed to load skill file: ${file}`, e);
+    }
+  }
+
+  return skills;
 }
 
-export function getAllSkills(): Skill[] {
-  const rows = allStmt.all() as Array<Record<string, unknown>>;
-  return rows.map(r => ({
-    id: r.id as string,
-    name: r.name as string,
-    description: (r.description as string) ?? "",
-    triggerPatterns: JSON.parse((r.trigger_patterns as string) || "[]") as string[],
-    steps: JSON.parse((r.steps as string) || "[]") as unknown[],
-    usageCount: r.usage_count as number,
-    lastUsedAt: (r.last_used_at as string) ?? null,
-    createdAt: r.created_at as string,
-  }));
-}
+/**
+ * Find a skill that matches the user's message.
+ */
+export function findMatchingSkill(input: string): Skill | null {
+  const skills = loadAllSkills();
+  const lowerInput = input.toLowerCase();
 
-export function findSkillByTrigger(userMessage: string): Skill | null {
-  const lower = userMessage.toLowerCase();
-  const skills = getAllSkills();
   for (const skill of skills) {
-    for (const pattern of skill.triggerPatterns) {
-      if (lower.includes(pattern.toLowerCase())) {
-        bumpStmt.run(skill.id);
+    for (const trigger of skill.triggers) {
+      if (lowerInput.includes(trigger.toLowerCase())) {
         return skill;
       }
     }
@@ -67,17 +56,44 @@ export function findSkillByTrigger(userMessage: string): Skill | null {
   return null;
 }
 
-export function getSkillByName(name: string): Skill | null {
-  const row = findStmt.get(name) as Record<string, unknown> | undefined;
-  if (!row) return null;
-  return {
-    id: row.id as string,
-    name: row.name as string,
-    description: (row.description as string) ?? "",
-    triggerPatterns: JSON.parse((row.trigger_patterns as string) || "[]") as string[],
-    steps: JSON.parse((row.steps as string) || "[]") as unknown[],
-    usageCount: row.usage_count as number,
-    lastUsedAt: (row.last_used_at as string) ?? null,
-    createdAt: row.created_at as string,
-  };
+/**
+ * Save a new skill to a Markdown file.
+ */
+export function saveSkill(skill: Omit<Skill, "fileName">): string {
+  const fileName = `${skill.name.toLowerCase().replace(/\s+/g, "-")}.md`;
+  const content = `---
+name: ${skill.name}
+description: ${skill.description}
+triggers: [${skill.triggers.join(", ")}]
+---
+
+# Steps
+${skill.steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}
+`;
+
+  writeFileSync(join(STORAGE_DIR, fileName), content, "utf-8");
+  log.info(`Skill saved: ${fileName}`);
+  return fileName;
+}
+
+/**
+ * Helper to parse a skill from Markdown with a YAML-ish header.
+ */
+function parseSkillMarkdown(content: string, fileName: string): Skill | null {
+  const headerMatch = content.match(/^---\n([\s\S]+?)\n---/);
+  if (!headerMatch) return null;
+
+  const headerRaw = headerMatch[1]!;
+  const name = headerRaw.match(/name:\s*(.+)/)?.[1]?.trim() || "Unknown";
+  const description = headerRaw.match(/description:\s*(.+)/)?.[1]?.trim() || "";
+  const triggersRaw = headerRaw.match(/triggers:\s*\[(.+)\]/)?.[1] || "";
+  const triggers = triggersRaw.split(",").map(t => t.trim()).filter(Boolean);
+
+  const stepsSection = content.split("# Steps")[1] || "";
+  const steps = stepsSection
+    .split("\n")
+    .map(line => line.replace(/^\d+\.\s*/, "").trim())
+    .filter(line => line.length > 0);
+
+  return { name, description, triggers, steps, fileName };
 }

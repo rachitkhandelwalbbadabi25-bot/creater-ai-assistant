@@ -4,6 +4,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 import type { GraphState } from "./state.js";
+import { Models } from "@config/models.js";
 import { routeRequest } from "@llm/router.js";
 import { detectEmotion } from "@emotion/detector.js";
 import { logEmotion } from "@emotion/personalMap.js";
@@ -79,7 +80,7 @@ export async function routerNode(state: GraphState): Promise<GraphState> {
     intent: "unknown",
     intentConfidence: 0,
     targetAgent: "taskAgent",
-    selectedModel: "qwen2.5:14b",
+    selectedModel: Models.PRIMARY,
     mood: emotion.mood,
     energy: emotion.energy,
     emotionConfidence: emotion.confidence,

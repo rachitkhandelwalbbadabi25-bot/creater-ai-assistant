@@ -93,7 +93,14 @@ async function getClassifier(): Promise<any> {
     classifier = await pipeline(
       "text-classification",
       "SamLowe/roberta-base-go_emotions",
-      { quantized: true } // Use quantized (int8) for speed
+      { 
+        quantized: true, // Use quantized (int8) for speed
+        progress_callback: (info: any) => {
+          if (info.status === "progress") {
+            log.info(`Downloading Emotion model... ${(info.progress as number).toFixed(1)}%`);
+          }
+        }
+      } 
     );
 
     log.info("Emotion classifier loaded successfully");

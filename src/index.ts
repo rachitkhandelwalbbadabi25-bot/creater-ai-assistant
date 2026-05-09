@@ -23,6 +23,8 @@ import { startTUI } from "@tui/app.js";
 import { startWakeWordDetection, stopWakeWordDetection } from "@voice/wakeWord.js";
 import { setupGlobalErrorHandler } from "@utils/errorHandler.js";
 import { log } from "@utils/logger.js";
+import { preloadModel as preloadEmotionModel } from "@emotion/xenova.js";
+import { initSTT as preloadWhisperModel } from "@voice/stt.js";
 
 // ─── Bootstrap Sequence ───────────────────────────────────────────────────────────
 async function main(): Promise<void> {
@@ -74,17 +76,24 @@ async function main(): Promise<void> {
 
   // 7. Start Voice Wake Word (if enabled)
   if (env.VOICE_ENABLED) {
+    log.info("Preloading STT Whisper model...");
+    await preloadWhisperModel().catch((e) => log.error("Failed to preload Whisper", e));
+    
     startWakeWordDetection(() => {
       // Phase 1: Simple logging. Phase 2: Active chat integration.
       log.info("🔔 Wake Word Detected! Try saying something in the terminal.");
     }).catch(e => log.error("Voice startup failed", e));
   }
 
-  // 8. Calculate startup time
+  // 8. Preload offline emotion model (Transformer)
+  log.info("Preloading local emotion classifier model...");
+  await preloadEmotionModel().catch((e) => log.error("Failed to preload emotion model", e));
+
+  // 9. Calculate startup time
   const elapsed = Date.now() - startTime;
   log.info(`✅ ${env.APP_NAME} ready in ${elapsed}ms`);
 
-  // 9. Start TUI (this blocks — it's the main interaction loop)
+  // 10. Start TUI (this blocks — it's the main interaction loop)
   startTUI();
 
   // ── Graceful Shutdown ───────────────────────────────────────────────────────

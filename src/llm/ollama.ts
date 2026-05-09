@@ -122,12 +122,16 @@ export async function chatStream(
 ): Promise<string> {
   log.llm(`Streaming chat to ${opts.model}`);
 
-  const stream = await client.chat({
-    model: opts.model,
-    messages: opts.messages,
-    options: opts.options,
-    stream: true,
-  } as any);
+  const stream = (await withTimeout(
+    client.chat({
+      model: opts.model,
+      messages: opts.messages,
+      options: opts.options,
+      stream: true,
+    } as any),
+    env.OLLAMA_TIMEOUT_MS,
+    `Chat stream connection with ${opts.model}`
+  )) as AsyncIterable<ChatResponse>;
 
   let full = "";
   for await (const chunk of stream as AsyncIterable<ChatResponse>) {

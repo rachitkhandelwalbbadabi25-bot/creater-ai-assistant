@@ -6,6 +6,7 @@
       "name": "creater-ai-assistant",
       "dependencies": {
         "@picovoice/porcupine-node": "4.0.2",
+        "@picovoice/pvrecorder-node": "^1.2.8",
         "@xenova/transformers": "^2.16.0",
         "axios": "^1.6.7",
         "better-sqlite3": "^9.4.3",
@@ -103,6 +104,8 @@
     "@nodelib/fs.walk": ["@nodelib/fs.walk@1.2.8", "", { "dependencies": { "@nodelib/fs.scandir": "2.1.5", "fastq": "^1.6.0" } }, ""],
 
     "@picovoice/porcupine-node": ["@picovoice/porcupine-node@4.0.2", "", { "cpu": [ "!ppc", "!ia32", "!mips", "!ppc64", ] }, "sha512-iGvjjmwERw1WpGrgFNZ46PlAzASXab+KqOu02p/RVs0+v6dL9JDQDhcYmGSXEqj+6dzJ08UsveYFySj+CFCYlQ=="],
+
+    "@picovoice/pvrecorder-node": ["@picovoice/pvrecorder-node@1.2.8", "", {}, "sha512-dbLJlplQQNRkM2ja/hP4sRADGDILuJ54dEf8cU5eULeNrddxXvOtE8IiJ5F2VhhbXmIv3Qmn79DqhttCOxjH8Q=="],
 
     "@protobufjs/aspromise": ["@protobufjs/aspromise@1.1.2", "", {}, ""],
 

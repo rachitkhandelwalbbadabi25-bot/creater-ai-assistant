@@ -150,14 +150,6 @@ export function contextToString(ctx: FullContext, maxTokens = 2048): string {
     );
   }
 
-  // Recent conversation
-  if (ctx.memory.recentMessages.length > 0) {
-    sections.push(
-      `\n[RECENT CONVERSATION]`,
-      ...ctx.memory.recentMessages.slice(-10) // last 10 messages
-    );
-  }
-
   const raw = sections.filter(Boolean).join("\n");
   return trimToTokenBudget(raw, maxTokens);
 }

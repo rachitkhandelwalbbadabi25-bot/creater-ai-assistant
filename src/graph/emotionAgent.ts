@@ -3,7 +3,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 import type { GraphState } from "./state.js";
-import { chat, type ChatMessage } from "@llm/ollama.js";
+import { chat, chatStream, type ChatMessage } from "@llm/ollama.js";
 import { SYSTEM_PROMPT } from "@llm/prompts.js";
 import { GenerationPresets } from "@config/models.js";
 import { addMessage, getChatHistory } from "@memory/shortTerm.js";
@@ -37,11 +37,23 @@ export async function emotionAgentNode(state: GraphState): Promise<GraphState> {
     { role: "user", content: state.currentInput },
   ];
 
-  const response = await chat({
-    model: state.selectedModel,
-    messages,
-    options: GenerationPresets.conversational,
-  });
+  let response = "";
+  if (state.onToken) {
+    response = await chatStream(
+      {
+        model: state.selectedModel,
+        messages,
+        options: GenerationPresets.conversational,
+      },
+      state.onToken
+    );
+  } else {
+    response = await chat({
+      model: state.selectedModel,
+      messages,
+      options: GenerationPresets.conversational,
+    });
+  }
 
   addMessage("user", state.currentInput, state.channel, {
     emotion: state.mood, intent: state.intent,

@@ -32,6 +32,16 @@ export const AvailableModels: Record<string, ModelDefinition> = {
   "gemini-1.5-flash": { id: "gemini-1.5-flash", provider: "gemini", type: "fast", contextWindow: 1000000 },
 };
 
+/**
+ * Checks if a model ID corresponds to a local Ollama model.
+ */
+export function isLocalModel(modelId: string): boolean {
+  const model = AvailableModels[modelId];
+  if (model) return model.provider === "ollama";
+  // Fallback heuristic for custom names
+  return modelId.includes(":") || modelId.startsWith("llama") || modelId.startsWith("qwen");
+}
+
 // ─── Provider Availability ───────────────────────────────────────────────────────
 export const ProviderAvailability = {
   get anthropic() { return !!env.ANTHROPIC_API_KEY; },
@@ -163,10 +173,10 @@ export const GenerationPresets = {
 export type PresetKey = keyof typeof GenerationPresets;
 
 /**
- * Returns the best model for a given task type.
+ * Returns the best model ID for a given task type.
  * Falls back to PRIMARY if task type is not mapped.
  */
-export function getModelForTask(taskType: string): ModelName {
+export function getModelForTask(taskType: string): string {
   return ModelRoutes[taskType] ?? Models.PRIMARY;
 }
 

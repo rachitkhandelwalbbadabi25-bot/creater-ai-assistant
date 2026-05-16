@@ -5,6 +5,7 @@
 import { chat, type ChatMessage } from "./ollama.js";
 import { INTENT_CLASSIFICATION_PROMPT } from "./prompts.js";
 import { Models, getModelForTask, getPresetForTask, GenerationPresets } from "@config/models.js";
+import { env } from "@config/index.js";
 import { createLogger } from "@utils/logger.js";
 import { safeAsync, type Result } from "@utils/errorHandler.js";
 
@@ -72,7 +73,7 @@ export async function classifyIntent(
     ];
 
     const response = await chat({
-      model: Models.FAST,
+      model: env.DEFAULT_MODEL || Models.FAST,
       messages,
       options: GenerationPresets.classification,
       format: "json",
@@ -107,9 +108,8 @@ export async function routeRequest(
     const intent = intentResult.value;
 
     // Step 2: Select model and preset
-    // If user has manually forced a model, use it (unless it's a fast intent that must be local for latency)
-    // Actually, user override should generally apply to reasoning tasks, but let's apply it globally for now
-    const model = userSelectedModel ?? getModelForTask(intent.intent);
+    // Preference: User Manual Override > .env DEFAULT_MODEL > Auto-routing
+    const model = userSelectedModel ?? env.DEFAULT_MODEL ?? getModelForTask(intent.intent);
     const preset = getPresetKeyForIntent(intent.intent);
 
     // Step 3: Select agent

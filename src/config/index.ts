@@ -36,6 +36,8 @@ const EnvSchema = z.object({
   GROK_API_KEY: z.string().default(""),
   GEMINI_API_KEY: z.string().default(""),
   DEFAULT_CLOUD_MODEL: z.string().default("claude-3-5-sonnet-20241022"),
+  DEFAULT_MODEL: z.string().optional(), // If set, overrides PRIMARY/FAST logic
+  LLM_PROVIDER: z.enum(["local", "cloud"]).default("local"),
 
   // Memory & DB
   SQLITE_DB_PATH: z.string().default("./data/creater.db"),

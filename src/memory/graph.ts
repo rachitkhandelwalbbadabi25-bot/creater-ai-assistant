@@ -308,28 +308,32 @@ export function archiveStaleNodes(): number {
 
 // ─── Graph Summary (for prompts) ────────────────────────────────────────────────
 /**
- * Build a compact text summary of the graph for injection into LLM system prompts.
+ * Builds a clean, structured string of the top knowledge graph nodes and their
+ * relationships for injection into an LLM prompt.
  */
-export function buildGraphContext(maxNodes = 15): string {
-  const nodes = getTopNodes(maxNodes);
-  if (nodes.length === 0) return "No personal knowledge graph entries yet.";
+export function buildGraphContext(limit: number = 10): string {
+  const topNodes = getTopNodes(limit);
+  if (topNodes.length === 0) return "";
 
-  const lines: string[] = ["[KNOWLEDGE GRAPH]"];
-  for (const node of nodes) {
-    const rawEdges = getEdgesFrom.all(node.id) as any[];
-    if (rawEdges.length === 0) {
-      lines.push(`• ${node.type}:${node.label}`);
-    } else {
-      const edgeStrs = rawEdges
-        .slice(0, 3)
-        .map(e => {
-          const target = getNodeById.get(e.to_id) as any;
-          return target ? `—[${e.relation}]→ ${target.label}` : null;
-        })
-        .filter(Boolean)
-        .join(", ");
-      lines.push(`• ${node.type}:${node.label} ${edgeStrs}`);
-    }
+  const lines: string[] = ["[PERSONAL KNOWLEDGE GRAPH]"];
+  
+  for (const node of topNodes) {
+    const detail = getNodeWithEdges(node.label);
+    if (!detail) continue;
+
+    // Node definition
+    let nodeStr = `• ${node.label} (${node.type})`;
+    if (node.description) nodeStr += `: ${node.description}`;
+    lines.push(nodeStr);
+
+    // Relationships
+    detail.edges.forEach(edge => {
+      // Avoid circular "knows" or redundant links for brief prompt
+      if (edge.target.label !== "User") {
+        lines.push(`  └─[${edge.relation}]─→ ${edge.target.label} (${edge.target.type})`);
+      }
+    });
   }
+
   return lines.join("\n");
 }

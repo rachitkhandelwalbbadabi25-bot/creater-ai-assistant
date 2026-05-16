@@ -83,23 +83,22 @@ export async function retrieveContext(
     }
   }
 
-  // ── 5. Graph: relational search ───────────────────────────────────────────
-  // First try full query search
-  let graphNodes = searchGraph(query, 5);
-  
-  // If no results, try keyword-based search
-  if (graphNodes.length < 3 && keywords.length > 0) {
-    for (const kw of keywords.slice(0, 3)) {
-      const kwResults = searchGraph(kw, 3);
-      for (const n of kwResults) {
-        if (!graphNodes.find(existing => existing.id === n.id)) {
-          graphNodes.push(n);
-        }
+  // ── 5. Graph: entity-based relational search ────────────────────────────────
+  const entities = extractEntities(query);
+  let graphNodes = searchGraph(query, 5); // Start with full query match
+
+  // Search by extracted entities (names, tech, places)
+  for (const ent of entities) {
+    const entResults = searchGraph(ent, 3);
+    for (const n of entResults) {
+      if (!graphNodes.find(existing => existing.id === n.id)) {
+        graphNodes.push(n);
       }
     }
   }
 
-  for (const n of graphNodes.slice(0, 8)) {
+  // Limit to top 8 most important nodes
+  for (const n of graphNodes.sort((a, b) => b.importance - a.importance).slice(0, 8)) {
     relevantMemories.push(`[graph:${n.type}] ${n.label}${n.description ? ": " + n.description : ""}`);
   }
 
@@ -114,7 +113,7 @@ export async function retrieveContext(
     }
   }
 
-  // ── 6. Profile: All known facts ──────────────────────────────────────────────
+  // ── 7. Profile: All known facts ──────────────────────────────────────────────
   const userProfileFacts = getAllFacts();
 
   const context: MemoryContext = {
@@ -125,7 +124,7 @@ export async function retrieveContext(
     upcomingDeadlines: [],
     systemStatus,
     userProfileFacts,
-    graphContext: buildGraphContext(15),
+    graphContext: buildGraphContext(10), // Limit to top 10 for prompt injection
   };
 
   log.mem(`Retrieved context: ${recentMessages.length} recent, ${relevantMemories.length} relevant`);
@@ -146,6 +145,21 @@ export function retrieveQuickContext(messageCount = 5): MemoryContext {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Extract entities (important nouns, capitalized words, tech terms) from text.
+ */
+function extractEntities(text: string): string[] {
+  // 1. Extract capitalized words (Proper Nouns)
+  const capitalized = text.match(/[A-Z][a-z]+/g) || [];
+  
+  // 2. Extract technical terms / keywords (3+ letters, non-stopword)
+  const keywords = extractKeywords(text);
+  
+  // Combine and deduplicate
+  return [...new Set([...capitalized, ...keywords])];
+}
+
 /**
  * Extract simple keywords from a query for fallback text search.
  */

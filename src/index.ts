@@ -15,7 +15,7 @@
 
 import { env, isDev } from "@config/index.js";
 import { checkOllamaHealth, ensureModel } from "@llm/ollama.js";
-import { Models } from "@config/models.js";
+import { Models, isLocalModel } from "@config/models.js";
 import { initVectorStore } from "@memory/vector.js";
 import { startScheduler, stopScheduler } from "@proactive/scheduler.js";
 import { startTelegramBot, stopTelegramBot } from "@bot/telegram.js";
@@ -38,30 +38,38 @@ async function main(): Promise<void> {
   log.info(`  Environment: ${env.APP_ENV}`);
   log.info(`  User: ${env.USER_NAME}`);
   log.info(`  Timezone: ${env.USER_TIMEZONE}`);
+  
+  const primaryModel = env.DEFAULT_MODEL || Models.PRIMARY;
+  const isLocal = isLocalModel(primaryModel);
+  log.info(`  Active Model: ${primaryModel} [${isLocal ? "LOCAL" : "CLOUD"}]`);
   log.info("═══════════════════════════════════════════════════");
 
-  // 2. Check Ollama connectivity
-  log.info("Checking Ollama connection...");
-  const health = await checkOllamaHealth();
-  if (!health.ok) {
-    log.error("Ollama is not reachable!", health.error);
-    log.error("Please start Ollama: `ollama serve` or `docker compose up -d`");
-    process.exit(1);
-  }
-  const models = health.value;
-  log.info(`Ollama connected — ${models.length} models available`);
+  // 2. LLM Readiness Check
+  if (isLocal || env.LLM_PROVIDER === "local") {
+    log.info("Checking Ollama connection...");
+    const health = await checkOllamaHealth();
+    if (!health.ok) {
+      log.error("Ollama is not reachable!", health.error);
+      log.error("Please start Ollama: `ollama serve` or `docker compose up -d` (since you are using a local model)");
+      process.exit(1);
+    }
+    const ollamaModels = health.value;
+    log.info(`Ollama connected — ${ollamaModels.length} models available`);
 
-  // 3. Ensure required models are pulled
-  log.info("Ensuring required models are available...");
-  try {
-    await ensureModel(Models.FAST);
-    await ensureModel(Models.PRIMARY);
-    // Coder and embed models are optional — don't block startup
-    ensureModel(Models.CODER).catch(() => log.warn("Coder model not available"));
-    ensureModel(Models.EMBED).catch(() => log.warn("Embed model not available"));
-  } catch (e) {
-    log.error("Failed to ensure models", e);
-    log.warn("Continuing with available models...");
+    // Ensure required local models are pulled
+    log.info("Ensuring required local models are available...");
+    try {
+      if (isLocalModel(Models.FAST)) await ensureModel(Models.FAST);
+      if (isLocalModel(Models.PRIMARY)) await ensureModel(Models.PRIMARY);
+      
+      // Optional models
+      if (isLocalModel(Models.CODER)) ensureModel(Models.CODER).catch(() => {});
+      if (isLocalModel(Models.EMBED)) ensureModel(Models.EMBED).catch(() => {});
+    } catch (e) {
+      log.warn("Failed to ensure some models - continuing anyway.");
+    }
+  } else {
+    log.info(`Cloud Provider detected (${primaryModel}) — skipping Ollama check.`);
   }
 
   // 4. Initialize vector store

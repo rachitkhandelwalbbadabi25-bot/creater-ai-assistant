@@ -30,5 +30,6 @@
     },
     "types": ["bun-types"]
   },
-  "include": ["src/**/*", "tests/**/*"]
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["src/web/**/*", "node_modules"]
 }

@@ -8,6 +8,10 @@ import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
 import { processMessage } from "@graph/supervisor.js";
 import { env } from "@config/index.js";
+import { AvailableModels } from "@config/models.js";
+import { setModelOverride, getModelOverride } from "@llm/router.js";
+import { getAllFacts } from "@memory/longTerm.js";
+import { getTopNodes, getGraphStats, getNodeWithEdges } from "@memory/graph.js";
 import { getAppStats, type AppStats } from "@utils/stats.js";
 import gradient from "gradient-string";
 import figlet from "figlet";
@@ -122,6 +126,83 @@ function CreaterApp() {
         import("@voice/wakeWord.js").then(m => m.stopWakeWordDetection());
         setMessages(prev => [...prev, { role: "assistant", content: "🔇 Voice detection stopped.", timestamp: new Date() }]);
       }
+      setInput("");
+      return;
+    }
+
+    if (trimmed.toLowerCase() === "/models") {
+      const modelList = Object.values(AvailableModels)
+        .map(m => `- ${m.id} [${m.provider}] (${m.type})`)
+        .join("\n");
+      const currentOverride = getModelOverride();
+      const overrideStatus = currentOverride ? `\n\nCurrent manual override: ${currentOverride}` : `\n\nAuto-routing is ACTIVE.`;
+      
+      setMessages(prev => [...prev, {
+        role: "assistant",
+        content: `🤖 Available Models:\n${modelList}${overrideStatus}\n\nType \`/model <id>\` to force a model, or \`/model auto\` to reset.`,
+        timestamp: new Date()
+      }]);
+      setInput("");
+      return;
+    }
+
+    if (trimmed.toLowerCase().startsWith("/model ")) {
+      const targetModel = trimmed.split(" ")[1];
+      if (targetModel === "auto" || targetModel === "none") {
+        setModelOverride(null);
+        setMessages(prev => [...prev, { role: "assistant", content: "🤖 Model override cleared. Auto-routing is now ACTIVE.", timestamp: new Date() }]);
+      } else if (AvailableModels[targetModel]) {
+        setModelOverride(targetModel);
+        setMessages(prev => [...prev, { role: "assistant", content: `🤖 Model override set to: **${targetModel}**`, timestamp: new Date() }]);
+      } else {
+        setMessages(prev => [...prev, { role: "assistant", content: `❌ Unknown model: ${targetModel}. Type \`/models\` to see the list.`, timestamp: new Date() }]);
+      }
+      setInput("");
+      return;
+    }
+
+    if (trimmed.toLowerCase() === "/facts") {
+      const allFacts = getAllFacts();
+      if (allFacts.length === 0) {
+        setMessages(prev => [...prev, { role: "assistant", content: "🧠 No facts stored yet. Chat more and I'll learn about you!", timestamp: new Date() }]);
+      } else {
+        const grouped = new Map<string, typeof allFacts>();
+        for (const f of allFacts) {
+          const arr = grouped.get(f.category) ?? [];
+          arr.push(f);
+          grouped.set(f.category, arr);
+        }
+        const lines: string[] = ["🧠 **Your Knowledge Base:**\n"];
+        for (const [cat, facts] of grouped) {
+          lines.push(`📂 ${cat.toUpperCase()}`);
+          for (const f of facts.slice(0, 8)) {
+            lines.push(`  • ${f.key}: ${f.value}`);
+          }
+        }
+        lines.push(`\n📊 Total: ${allFacts.length} facts stored`);
+        setMessages(prev => [...prev, { role: "assistant", content: lines.join("\n"), timestamp: new Date() }]);
+      }
+      setInput("");
+      return;
+    }
+
+    if (trimmed.toLowerCase() === "/graph") {
+      const stats = getGraphStats();
+      const topNodes = getTopNodes(8);
+      const lines: string[] = [
+        `🕸️ **Memory Graph** — ${stats.nodeCount} nodes · ${stats.edgeCount} edges · ${stats.archivedCount} archived\n`,
+      ];
+      for (const node of topNodes) {
+        const withEdges = getNodeWithEdges(node.label);
+        if (withEdges && withEdges.edges.length > 0) {
+          const edgeStr = withEdges.edges.slice(0, 3).map(e => `${e.relation}→${e.target.label}`).join(", ");
+          lines.push(`  [${node.type}] ${node.label}  ──  ${edgeStr}`);
+        } else {
+          lines.push(`  [${node.type}] ${node.label}`);
+        }
+      }
+      if (topNodes.length === 0) lines.push("  No graph nodes yet. Facts will auto-populate the graph.");
+      setMessages(prev => [...prev, { role: "assistant", content: lines.join("\n"), timestamp: new Date() }]);
       setInput("");
       return;
     }

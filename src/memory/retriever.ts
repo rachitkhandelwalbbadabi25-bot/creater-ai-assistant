@@ -5,6 +5,7 @@
 import { getRecentMessages } from "./shortTerm.js";
 import { getTopSummaries, searchSummaries } from "./midTerm.js";
 import { searchFacts, buildUserProfile, getAllFacts } from "./longTerm.js";
+import { buildGraphContext, searchGraph } from "./graph.js";
 import { search as vectorSearch } from "./vector.js";
 import { createLogger } from "@utils/logger.js";
 import type { MemoryContext } from "@utils/contextBuilder.js";
@@ -82,7 +83,27 @@ export async function retrieveContext(
     }
   }
 
-  // ── 5. System: current laptop stats ─────────────────────────────────────────
+  // ── 5. Graph: relational search ───────────────────────────────────────────
+  // First try full query search
+  let graphNodes = searchGraph(query, 5);
+  
+  // If no results, try keyword-based search
+  if (graphNodes.length < 3 && keywords.length > 0) {
+    for (const kw of keywords.slice(0, 3)) {
+      const kwResults = searchGraph(kw, 3);
+      for (const n of kwResults) {
+        if (!graphNodes.find(existing => existing.id === n.id)) {
+          graphNodes.push(n);
+        }
+      }
+    }
+  }
+
+  for (const n of graphNodes.slice(0, 8)) {
+    relevantMemories.push(`[graph:${n.type}] ${n.label}${n.description ? ": " + n.description : ""}`);
+  }
+
+  // ── 6. System: current laptop stats ─────────────────────────────────────────
   let systemStatus: any = undefined;
   if (options.query.toLowerCase().includes("system") || options.query.toLowerCase().includes("laptop") || options.query.toLowerCase().includes("battery")) {
     try {
@@ -104,6 +125,7 @@ export async function retrieveContext(
     upcomingDeadlines: [],
     systemStatus,
     userProfileFacts,
+    graphContext: buildGraphContext(15),
   };
 
   log.mem(`Retrieved context: ${recentMessages.length} recent, ${relevantMemories.length} relevant`);

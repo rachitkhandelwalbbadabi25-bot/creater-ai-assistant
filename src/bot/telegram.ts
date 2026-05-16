@@ -8,6 +8,10 @@ import { processMessage } from "@graph/supervisor.js";
 import { onBriefingReady } from "@proactive/briefing.js";
 import { onNightCheckReady } from "@proactive/nightCheck.js";
 import { onAlertReady } from "@proactive/alerts.js";
+import { AvailableModels, ProviderAvailability } from "@config/models.js";
+import { setModelOverride, getModelOverride } from "@llm/router.js";
+import { getAllFacts } from "@memory/longTerm.js";
+import { getGraphStats, getTopNodes } from "@memory/graph.js";
 import { createLogger } from "@utils/logger.js";
 
 const log = createLogger("bot/telegram");
@@ -53,10 +57,64 @@ export function startTelegramBot(): void {
       `📋 **Available Commands:**\n\n` +
       `/start — Start conversation\n` +
       `/status — Detailed system status\n` +
-      `/memory — View what I remember about you\n` +
+      `/memory — Memory overview + graph stats\n` +
+      `/facts — Full knowledge base (all stored facts)\n` +
+      `/graph — Knowledge graph (top nodes)\n` +
       `/briefing — Get your morning briefing now\n` +
+      `/models — List all available AI models\n` +
+      `/model <name> — Switch AI model (or 'auto' to reset)\n` +
       `/help — Show this message`
     );
+  });
+
+  bot.command("models", async (ctx) => {
+    const currentOverride = getModelOverride();
+    const providerStatus = [
+      `• Anthropic: ${ProviderAvailability.anthropic ? "✅ Configured" : "❌ No API Key"}`,
+      `• OpenAI: ${ProviderAvailability.openai ? "✅ Configured" : "❌ No API Key"}`,
+      `• Grok: ${ProviderAvailability.grok ? "✅ Configured" : "❌ No API Key"}`,
+      `• Gemini: ${ProviderAvailability.gemini ? "✅ Configured" : "❌ No API Key"}`,
+      `• Ollama (Local): ✅ Always available`,
+    ].join("\n");
+
+    const modelList = Object.values(AvailableModels)
+      .filter(m => m.type !== "embedding")
+      .map(m => `  \`${m.id}\` — ${m.provider} (${m.type})`)
+      .join("\n");
+
+    const activeInfo = currentOverride
+      ? `🔒 Active override: \`${currentOverride}\`\nType /model auto to reset.`
+      : `⚡ Auto-routing ACTIVE (smart model selection).`;
+
+    await ctx.reply(
+      `🤖 **Model Status:**\n\n${activeInfo}\n\n` +
+      `**Providers:**\n${providerStatus}\n\n` +
+      `**Available Models:**\n${modelList}`,
+      { parse_mode: "Markdown" }
+    );
+  });
+
+  bot.command("model", async (ctx) => {
+    const args = ctx.message?.text.split(" ").slice(1).join(" ").trim();
+    if (!args) {
+      const cur = getModelOverride();
+      await ctx.reply(
+        cur
+          ? `🤖 Current model: \`${cur}\`. Use /model auto to reset.`
+          : `⚡ Auto-routing ACTIVE. Use /model <model-id> to override.`,
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
+    if (args === "auto" || args === "none") {
+      setModelOverride(null);
+      await ctx.reply("⚡ Model override cleared. Auto-routing is now active.");
+    } else if (AvailableModels[args]) {
+      setModelOverride(args);
+      await ctx.reply(`✅ Model set to: \`${args}\``, { parse_mode: "Markdown" });
+    } else {
+      await ctx.reply(`❌ Unknown model: \`${args}\`\nType /models to see the full list.`, { parse_mode: "Markdown" });
+    }
   });
 
   bot.command("status", async (ctx) => {
@@ -84,14 +142,62 @@ export function startTelegramBot(): void {
     
     const summaries = getTopSummaries(3);
     const emotion = buildEmotionProfile();
+    const graphStats = getGraphStats();
+    const allFacts = getAllFacts();
     
     const memMsg = 
-      `🧠 **Memory & Profile:**\n\n` +
-      `• **Current Vibe:** ${emotion}\n\n` +
-      `• **Recent Key Facts:**\n` +
-      (summaries.length ? summaries.map(s => `  - ${s.content.slice(0, 100)}...`).join("\n") : "  - No long-term facts stored yet.");
+      `🧠 **Memory & Knowledge:**\n\n` +
+      `• **Current Vibe:** ${emotion}\n` +
+      `• **Facts stored:** ${allFacts.length}\n` +
+      `• **Graph nodes:** ${graphStats.nodeCount} | **Edges:** ${graphStats.edgeCount}\n\n` +
+      `📌 **Recent Key Facts:**\n` +
+      (summaries.length ? summaries.map(s => `  - ${s.content.slice(0, 100)}...`).join("\n") : "  - No long-term facts stored yet.") +
+      `\n\nType /facts for full knowledge base or /graph for the knowledge graph.`;
       
     await ctx.reply(memMsg, { parse_mode: "Markdown" });
+  });
+
+  bot.command("facts", async (ctx) => {
+    await ctx.replyWithChatAction("typing");
+    const allFacts = getAllFacts();
+    if (allFacts.length === 0) {
+      await ctx.reply("🧠 No facts stored yet. Keep chatting and I'll learn about you!");
+      return;
+    }
+    const grouped = new Map<string, typeof allFacts>();
+    for (const f of allFacts) {
+      const arr = grouped.get(f.category) ?? [];
+      arr.push(f);
+      grouped.set(f.category, arr);
+    }
+    const lines: string[] = ["🧠 **Your Knowledge Base:**\n"];
+    for (const [cat, facts] of grouped) {
+      lines.push(`\n📂 *${cat.toUpperCase()}*`);
+      for (const f of facts.slice(0, 10)) {
+        lines.push(`  • ${f.key}: ${f.value}`);
+      }
+      if (facts.length > 10) lines.push(`  _...and ${facts.length - 10} more_`);
+    }
+    lines.push(`\n📊 **Total:** ${allFacts.length} facts`);
+    await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+  });
+
+  bot.command("graph", async (ctx) => {
+    await ctx.replyWithChatAction("typing");
+    const stats = getGraphStats();
+    const topNodes = getTopNodes(10);
+    const lines: string[] = [
+      `🕸️ **Memory Graph**\n`,
+      `Nodes: *${stats.nodeCount}* | Edges: *${stats.edgeCount}* | Archived: ${stats.archivedCount}\n`,
+    ];
+    if (topNodes.length === 0) {
+      lines.push("_No nodes yet — facts auto-populate the graph as you chat._");
+    } else {
+      for (const n of topNodes) {
+        lines.push(`  \`[${n.type}]\` ${n.label}`);
+      }
+    }
+    await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
   });
 
   bot.command("briefing", async (ctx) => {

@@ -110,3 +110,56 @@ export async function updateSettingsAction(settings: any) {
     return { success: false, error: error.message };
   }
 }
+
+/**
+ * Fetches the Memory Graph: top nodes with their edges, plus graph stats.
+ * Optional search query filters by label / description.
+ */
+export async function getGraphAction(query?: string) {
+  try {
+    let nodeRows: any[];
+    if (query) {
+      const q = `%${query}%`;
+      nodeRows = db.prepare(
+        `SELECT * FROM memory_nodes WHERE label LIKE ? OR description LIKE ? ORDER BY importance DESC LIMIT 60`
+      ).all(q, q);
+    } else {
+      nodeRows = db.prepare(
+        `SELECT * FROM memory_nodes ORDER BY importance DESC, access_count DESC LIMIT 60`
+      ).all();
+    }
+
+    // Attach edges to each node
+    const edgeStmt = db.prepare(
+      `SELECT e.*, n.label as target_label, n.type as target_type
+       FROM memory_edges e
+       JOIN memory_nodes n ON e.to_id = n.id
+       WHERE e.from_id = ?
+       ORDER BY e.weight DESC LIMIT 8`
+    );
+
+    const nodes = nodeRows.map(node => {
+      const edges = (edgeStmt.all(node.id) as any[]).map(e => ({
+        relation: e.relation,
+        weight: e.weight,
+        target: { label: e.target_label, type: e.target_type },
+      }));
+      return {
+        ...node,
+        tags: (() => { try { return JSON.parse(node.tags || "[]"); } catch { return []; } })(),
+        edges,
+      };
+    });
+
+    const stats = db.prepare(
+      `SELECT
+        (SELECT COUNT(*) FROM memory_nodes)    as nodeCount,
+        (SELECT COUNT(*) FROM memory_edges)    as edgeCount,
+        (SELECT COUNT(*) FROM memory_archives) as archivedCount`
+    ).get();
+
+    return { success: true, data: { nodes, stats } };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}

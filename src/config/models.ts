@@ -4,20 +4,69 @@
 
 import { env } from "./index.js";
 
-// ─── Model Registry ───────────────────────────────────────────────────────────────
+// ─── Model Providers ─────────────────────────────────────────────────────────────
+export type ModelProvider = "ollama" | "anthropic" | "openai" | "grok" | "gemini";
+
+export interface ModelDefinition {
+  id: string;
+  provider: ModelProvider;
+  type: "fast" | "reasoning" | "coder" | "embedding";
+  contextWindow?: number;
+}
+
+// ─── Model Catalog ───────────────────────────────────────────────────────────────
+export const AvailableModels: Record<string, ModelDefinition> = {
+  // Local Models
+  [env.OLLAMA_FAST_MODEL]: { id: env.OLLAMA_FAST_MODEL, provider: "ollama", type: "fast" },
+  [env.OLLAMA_PRIMARY_MODEL]: { id: env.OLLAMA_PRIMARY_MODEL, provider: "ollama", type: "reasoning" },
+  [env.OLLAMA_CODER_MODEL]: { id: env.OLLAMA_CODER_MODEL, provider: "ollama", type: "coder" },
+  [env.OLLAMA_EMBED_MODEL]: { id: env.OLLAMA_EMBED_MODEL, provider: "ollama", type: "embedding" },
+  
+  // Cloud Models
+  "claude-3-5-sonnet-20241022": { id: "claude-3-5-sonnet-20241022", provider: "anthropic", type: "reasoning", contextWindow: 200000 },
+  "claude-3-haiku-20240307": { id: "claude-3-haiku-20240307", provider: "anthropic", type: "fast", contextWindow: 200000 },
+  "gpt-4o": { id: "gpt-4o", provider: "openai", type: "reasoning", contextWindow: 128000 },
+  "gpt-4o-mini": { id: "gpt-4o-mini", provider: "openai", type: "fast", contextWindow: 128000 },
+  "grok-beta": { id: "grok-beta", provider: "grok", type: "reasoning", contextWindow: 128000 },
+  "gemini-1.5-pro": { id: "gemini-1.5-pro", provider: "gemini", type: "reasoning", contextWindow: 2000000 },
+  "gemini-1.5-flash": { id: "gemini-1.5-flash", provider: "gemini", type: "fast", contextWindow: 1000000 },
+};
+
+// ─── Provider Availability ───────────────────────────────────────────────────────
+export const ProviderAvailability = {
+  get anthropic() { return !!env.ANTHROPIC_API_KEY; },
+  get openai() { return !!env.OPENAI_API_KEY; },
+  get grok() { return !!env.GROK_API_KEY; },
+  get gemini() { return !!env.GEMINI_API_KEY; },
+  get ollama() { return true; }, // Local is always available
+};
+
+// ─── Default Model Aliases ───────────────────────────────────────────────────────
 export const Models = {
   /** High-capability model for deep reasoning, planning, complex tasks */
-  PRIMARY: env.OLLAMA_PRIMARY_MODEL,
+  get PRIMARY() {
+    if (ProviderAvailability.anthropic) return "claude-3-5-sonnet-20241022";
+    if (ProviderAvailability.openai) return "gpt-4o";
+    return env.DEFAULT_CLOUD_MODEL || env.OLLAMA_PRIMARY_MODEL;
+  },
   /** Lightweight model for routing, emotion detection, quick classification */
-  FAST: env.OLLAMA_FAST_MODEL,
+  get FAST() {
+    return env.OLLAMA_FAST_MODEL; // Keep fast tasks local by default
+  },
   /** Code-specialized model for all coding tasks */
-  CODER: env.OLLAMA_CODER_MODEL,
+  get CODER() {
+    if (ProviderAvailability.anthropic) return "claude-3-5-sonnet-20241022";
+    if (ProviderAvailability.openai) return "gpt-4o";
+    return env.OLLAMA_CODER_MODEL;
+  },
   /** Embedding model for semantic memory and RAG */
-  EMBED: env.OLLAMA_EMBED_MODEL,
+  get EMBED() {
+    return env.OLLAMA_EMBED_MODEL;
+  },
 } as const;
 
 export type ModelKey = keyof typeof Models;
-export type ModelName = (typeof Models)[ModelKey];
+export type ModelName = string;
 
 // ─── Task Categories → Model Routing ─────────────────────────────────────────────
 // Maps intent types to the appropriate model to use.

@@ -130,6 +130,51 @@ function runMigrations(): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_analytics_type ON analytics(event_type);
+
+    -- ─── Memory Graph: Nodes ──────────────────────────────────────────────────
+    -- Each node is a concept/entity: person, preference, project, habit, topic
+    CREATE TABLE IF NOT EXISTS memory_nodes (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,               -- person | preference | project | habit | topic | emotion | skill
+      label TEXT NOT NULL UNIQUE,       -- unique display name used as natural key
+      description TEXT,                 -- richer text content
+      tags TEXT DEFAULT '[]',           -- JSON string array of tags
+      importance REAL DEFAULT 0.5,      -- 0.0–1.0, used for ranking and archival
+      access_count INTEGER DEFAULT 0,   -- how often this node is referenced
+      last_accessed TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_nodes_type ON memory_nodes(type);
+    CREATE INDEX IF NOT EXISTS idx_nodes_importance ON memory_nodes(importance DESC);
+    CREATE INDEX IF NOT EXISTS idx_nodes_label ON memory_nodes(label);
+
+    -- ─── Memory Graph: Edges ──────────────────────────────────────────────────
+    -- Directed, typed relationships between nodes
+    CREATE TABLE IF NOT EXISTS memory_edges (
+      id TEXT PRIMARY KEY,
+      from_id TEXT NOT NULL REFERENCES memory_nodes(id) ON DELETE CASCADE,
+      to_id TEXT NOT NULL REFERENCES memory_nodes(id) ON DELETE CASCADE,
+      relation TEXT NOT NULL,           -- likes | dislikes | uses | works_on | knows | has_habit | related_to | prefers
+      weight REAL DEFAULT 1.0,          -- strength of the relationship
+      context TEXT,                     -- optional explanation / source sentence
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(from_id, to_id, relation)
+    );
+    CREATE INDEX IF NOT EXISTS idx_edges_from ON memory_edges(from_id);
+    CREATE INDEX IF NOT EXISTS idx_edges_to ON memory_edges(to_id);
+    CREATE INDEX IF NOT EXISTS idx_edges_relation ON memory_edges(relation);
+
+    -- ─── Memory Archives ──────────────────────────────────────────────────────
+    -- Low-importance nodes moved here after archival
+    CREATE TABLE IF NOT EXISTS memory_archives (
+      id TEXT PRIMARY KEY,
+      original_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      label TEXT NOT NULL,
+      description TEXT,
+      archived_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   log.info("All migrations applied successfully");

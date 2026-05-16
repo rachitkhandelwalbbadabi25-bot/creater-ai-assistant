@@ -30,6 +30,13 @@ const EnvSchema = z.object({
   OLLAMA_CODER_MODEL: z.string().default("qwen2.5-coder:7b"),
   OLLAMA_EMBED_MODEL: z.string().default("nomic-embed-text:latest"),
 
+  // Cloud API Keys (Multi-LLM)
+  ANTHROPIC_API_KEY: z.string().default(""),
+  OPENAI_API_KEY: z.string().default(""),
+  GROK_API_KEY: z.string().default(""),
+  GEMINI_API_KEY: z.string().default(""),
+  DEFAULT_CLOUD_MODEL: z.string().default("claude-3-5-sonnet-20241022"),
+
   // Memory & DB
   SQLITE_DB_PATH: z.string().default("./data/creater.db"),
   VECTOR_DB_PATH: z.string().default("./data/vectors"),

@@ -8,6 +8,7 @@ import { generateMorningBriefing } from "./briefing.js";
 import { generateNightCheck } from "./nightCheck.js";
 import { checkDeadlines, checkBatteryAlert, checkLateNightAlert } from "./alerts.js";
 import { runMemoryMaintenance } from "@memory/summarizer.js";
+import { archiveStaleNodes } from "@memory/graph.js";
 import { persistLearnedPatterns } from "@emotion/learner.js";
 import { createLogger } from "@utils/logger.js";
 
@@ -79,12 +80,12 @@ export function startScheduler(): void {
     }, { timezone: env.USER_TIMEZONE })
   );
 
-  // 7. Emotion pattern learning (daily at 2 AM)
+  // 8. Graph maintenance (every 4 hours)
   jobs.push(
-    cron.schedule("0 2 * * *", () => {
-      log.info("📊 Learning emotion patterns");
-      try { persistLearnedPatterns(); }
-      catch (e) { log.error("Emotion learning failed", e); }
+    cron.schedule("0 */4 * * *", () => {
+      log.info("🕸️ Running graph archival");
+      try { archiveStaleNodes(); }
+      catch (e) { log.error("Graph archival failed", e); }
     }, { timezone: env.USER_TIMEZONE })
   );
 

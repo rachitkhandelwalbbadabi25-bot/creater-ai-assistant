@@ -10,7 +10,8 @@ import {
   Lock,
   Eye,
   Save,
-  Check
+  Check,
+  Key
 } from "lucide-react";
 import { updateSettingsAction } from "@/app/actions";
 import { cn } from "@/lib/utils";
@@ -66,16 +67,23 @@ export default function Settings() {
           <ToggleItem label="Auto-Skill Generation" description="Allow AI to suggest new skills from patterns." defaultChecked />
         </SettingsGroup>
 
-        {/* Interface */}
-        <SettingsGroup icon={<Eye size={18} />} title="Interface & Output">
+        {/* Interface & Models */}
+        <SettingsGroup icon={<Eye size={18} />} title="Models & Output">
           <SelectItem 
-            label="Primary Model" 
-            options={["qwen2.5-coder:7b", "llama3.1", "mistral"]} 
-            description="LLM engine used for reasoning." 
+            label="Global Model Override" 
+            options={["Auto-Routing (Smart)", "claude-3-5-sonnet-20241022", "gpt-4o", "gemini-1.5-pro", "qwen2.5:7b"]} 
+            description="Force a specific model for all tasks (TUI & Web). Auto uses local for fast tasks, cloud for complex." 
           />
           <ToggleItem label="Hinglish Support" description="Enable natural Hindi+English mixed responses." defaultChecked />
           <ToggleItem label="Telegram Integration" description="Relay alerts and chat to Telegram bot." defaultChecked />
           <ToggleItem label="Voice Recognition" description="Enable 'Hey Creater' background wake-word detection." />
+        </SettingsGroup>
+
+        {/* API Keys (Multi-LLM) */}
+        <SettingsGroup icon={<Key size={18} />} title="Cloud Providers (Multi-LLM)">
+          <InputItem label="Anthropic API Key" placeholder="sk-ant-..." type="password" description="Required for Claude 3.5 Sonnet." />
+          <InputItem label="OpenAI API Key" placeholder="sk-proj-..." type="password" description="Required for GPT-4o." />
+          <InputItem label="Gemini API Key" placeholder="AIza..." type="password" description="Required for Gemini models." />
         </SettingsGroup>
 
         {/* Privacy */}
@@ -135,6 +143,20 @@ function SelectItem({ label, options, description }: { label: string, options: s
       <select className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-300 outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer font-medium">
         {options.map(opt => <option key={opt}>{opt}</option>)}
       </select>
+      <p className="text-[11px] text-zinc-600 font-medium">{description}</p>
+    </div>
+  );
+}
+
+function InputItem({ label, placeholder, type = "text", description }: { label: string, placeholder: string, type?: string, description: string }) {
+  return (
+    <div className="space-y-2.5">
+      <p className="text-sm font-semibold text-zinc-200">{label}</p>
+      <input 
+        type={type}
+        placeholder={placeholder}
+        className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-300 outline-none focus:border-cyan-500/50 transition-all font-medium placeholder:text-zinc-600"
+      />
       <p className="text-[11px] text-zinc-600 font-medium">{description}</p>
     </div>
   );

@@ -5,6 +5,7 @@
 import { db } from "./db.js";
 import { createLogger } from "@utils/logger.js";
 import { generateId } from "@utils/helpers.js";
+import { autoLinkFact } from "./graph.js";
 
 const log = createLogger("memory/longTerm");
 
@@ -59,6 +60,8 @@ export function storeFact(
   const id = generateId();
   upsertStmt.run(id, category, key, value, confidence, source ?? null);
   log.mem(`Stored fact: [${category}] ${key} = ${value}`);
+  // Auto-link into the knowledge graph
+  try { autoLinkFact(category, key, value); } catch (_) {}
   return { id, category, key, value, confidence, source: source ?? null, createdAt: "", updatedAt: "" };
 }
 

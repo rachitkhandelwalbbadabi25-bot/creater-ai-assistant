@@ -25,6 +25,22 @@ export interface RouteDecision {
   agent: string; // which agent should handle this
 }
 
+// ─── Manual Override State ────────────────────────────────────────────────────────
+let userSelectedModel: string | null = null;
+
+export function setModelOverride(modelName: string | null) {
+  userSelectedModel = modelName;
+  if (modelName) {
+    log.info(`Manual model override set to: ${modelName}`);
+  } else {
+    log.info(`Manual model override cleared. Using auto-routing.`);
+  }
+}
+
+export function getModelOverride(): string | null {
+  return userSelectedModel;
+}
+
 // ─── Intent → Agent Mapping ───────────────────────────────────────────────────────
 const INTENT_TO_AGENT: Record<string, string> = {
   chitchat: "emotionAgent",
@@ -91,7 +107,9 @@ export async function routeRequest(
     const intent = intentResult.value;
 
     // Step 2: Select model and preset
-    const model = getModelForTask(intent.intent);
+    // If user has manually forced a model, use it (unless it's a fast intent that must be local for latency)
+    // Actually, user override should generally apply to reasoning tasks, but let's apply it globally for now
+    const model = userSelectedModel ?? getModelForTask(intent.intent);
     const preset = getPresetKeyForIntent(intent.intent);
 
     // Step 3: Select agent

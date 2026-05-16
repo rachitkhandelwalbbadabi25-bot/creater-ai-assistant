@@ -36,6 +36,7 @@ export interface MemoryContext {
   upcomingDeadlines?: string[];
   systemStatus?: SystemSnapshot;
   userProfileFacts?: Fact[];
+  graphContext?: string;
 }
 
 export interface FullContext {
@@ -148,6 +149,10 @@ export function contextToString(ctx: FullContext, maxTokens = 2048): string {
       `\n[UPCOMING DEADLINES]`,
       ...ctx.memory.upcomingDeadlines.map((d) => `  ⏰ ${d}`)
     );
+  }
+
+  if (ctx.memory.graphContext) {
+    sections.push(`\n${ctx.memory.graphContext}`);
   }
 
   const raw = sections.filter(Boolean).join("\n");

@@ -14,7 +14,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 import { env, isDev } from "@config/index.js";
-import { loadPersistedSettings } from "@config/settings.js";
+import { loadPersistedSettings, getSetting } from "@config/settings.js";
 import { checkOllamaHealth, ensureModel } from "@llm/ollama.js";
 import { Models, isLocalModel } from "@config/models.js";
 import { initVectorStore } from "@memory/vector.js";
@@ -36,6 +36,17 @@ async function main(): Promise<void> {
 
   // 1b. Load persistent settings from database
   loadPersistedSettings();
+
+  // 1c. Setup Wizard bypass on first launch
+  const isSetupComplete = getSetting("SETUP_COMPLETE") === "true";
+  if (!isSetupComplete) {
+    log.info("First run detected — launching Setup Wizard...");
+    initVectorStore();
+    startScheduler();
+    startTelegramBot();
+    startTUI();
+    return;
+  }
 
   log.info("═══════════════════════════════════════════════════");
   log.info(`  ${env.APP_NAME} v0.1.0 — Starting up...`);

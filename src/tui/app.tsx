@@ -17,6 +17,8 @@ import gradient from "gradient-string";
 import figlet from "figlet";
 import dayjs from "dayjs";
 import { voiceEvents } from "@voice/wakeWord.js";
+import { SetupWizard } from "./wizard.js";
+import { getSetting } from "@config/settings.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────────
 interface ChatEntry {
@@ -398,6 +400,36 @@ function CreaterApp() {
   );
 }
 
+// ─── Setup Wizard Wrapper ─────────────────────────────────────────────────────────
+function TUIApp() {
+  const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    try {
+      const check = getSetting("SETUP_COMPLETE");
+      setSetupComplete(check === "true");
+    } catch (e) {
+      setSetupComplete(false);
+    }
+  }, []);
+
+  if (setupComplete === null) {
+    return (
+      <Box padding={2} justifyContent="center" alignItems="center">
+        <Text color="cyan">
+          <Spinner type="dots" /> Loading settings...
+        </Text>
+      </Box>
+    );
+  }
+
+  if (!setupComplete) {
+    return <SetupWizard onComplete={() => setSetupComplete(true)} />;
+  }
+
+  return <CreaterApp />;
+}
+
 // ─── Entry Point ──────────────────────────────────────────────────────────────────
 export function startTUI(): void {
   if (!process.stdin.isTTY && env.APP_ENV !== "test") {
@@ -413,7 +445,7 @@ export function startTUI(): void {
     console.log("\n  ✨ Creater — Your Personal AI Assistant\n");
   }
 
-  render(<CreaterApp />);
+  render(<TUIApp />);
 }
 
 if ((import.meta as any).main) {

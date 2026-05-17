@@ -71,7 +71,14 @@ export async function addEntry(
   text: string,
   metadata: Record<string, unknown> = {}
 ): Promise<VectorEntry> {
-  const vector = await embedSingle(text);
+  let vector: number[];
+  try {
+    vector = await embedSingle(text);
+  } catch (e) {
+    log.warn("Failed to generate embedding for vector entry — using fallback empty vector", { error: String(e) });
+    vector = new Array(768).fill(0);
+  }
+  
   const entry: VectorEntry = {
     id: generateId(),
     text,
@@ -96,12 +103,18 @@ export async function addEntries(
   items: Array<{ text: string; metadata?: Record<string, unknown> }>
 ): Promise<VectorEntry[]> {
   const texts = items.map((i) => i.text);
-  const vectors = await embed(texts);
+  let vectors: number[][];
+  try {
+    vectors = await embed(texts);
+  } catch (e) {
+    log.warn("Failed to generate batch embedding — using fallback empty vectors", { error: String(e) });
+    vectors = items.map(() => new Array(768).fill(0));
+  }
 
   const newEntries: VectorEntry[] = items.map((item, i) => ({
     id: generateId(),
     text: item.text,
-    vector: vectors[i]!,
+    vector: vectors[i] || new Array(768).fill(0),
     metadata: item.metadata ?? {},
     createdAt: new Date().toISOString(),
   }));
@@ -123,7 +136,13 @@ export async function search(
 ): Promise<SearchResult[]> {
   if (entries.length === 0) return [];
 
-  const queryVector = await embedSingle(query);
+  let queryVector: number[];
+  try {
+    queryVector = await embedSingle(query);
+  } catch (e) {
+    log.warn("Failed to generate embedding for search query — returning empty results", { error: String(e) });
+    return [];
+  }
 
   const scored: SearchResult[] = entries
     .map((entry) => ({

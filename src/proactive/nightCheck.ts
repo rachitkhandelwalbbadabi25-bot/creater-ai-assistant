@@ -2,7 +2,7 @@
 // src/proactive/nightCheck.ts — Night check-in generator
 // ════════════════════════════════════════════════════════════════════════════════
 
-import { chat, type ChatMessage } from "@llm/ollama.js";
+import { chat, type ChatMessage } from "@llm/client.js";
 import { NIGHT_CHECK_PROMPT } from "@llm/prompts.js";
 import { Models, GenerationPresets } from "@config/models.js";
 import { buildUserContext } from "@utils/contextBuilder.js";

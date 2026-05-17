@@ -2,7 +2,7 @@
 // src/llm/router.ts — Smart model selection based on intent and task type
 // ════════════════════════════════════════════════════════════════════════════════
 
-import { chat, type ChatMessage } from "./ollama.js";
+import { chat, type ChatMessage } from "./client.js";
 import { INTENT_CLASSIFICATION_PROMPT } from "./prompts.js";
 import { Models, getModelForTask, getPresetForTask, GenerationPresets } from "@config/models.js";
 import { env } from "@config/index.js";

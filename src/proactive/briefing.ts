@@ -2,7 +2,7 @@
 // src/proactive/briefing.ts — Morning briefing generator
 // ════════════════════════════════════════════════════════════════════════════════
 
-import { chat, type ChatMessage } from "@llm/ollama.js";
+import { chat, type ChatMessage } from "@llm/client.js";
 import { MORNING_BRIEFING_PROMPT } from "@llm/prompts.js";
 import { Models, GenerationPresets } from "@config/models.js";
 import { buildUserContext } from "@utils/contextBuilder.js";

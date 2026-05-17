@@ -55,18 +55,33 @@ export const ProviderAvailability = {
 export const Models = {
   /** High-capability model for deep reasoning, planning, complex tasks */
   get PRIMARY() {
-    if (ProviderAvailability.anthropic) return "claude-3-5-sonnet-20241022";
-    if (ProviderAvailability.openai) return "gpt-4o";
-    return env.DEFAULT_CLOUD_MODEL || env.OLLAMA_PRIMARY_MODEL;
+    if (env.LLM_PROVIDER === "cloud") {
+      if (ProviderAvailability.anthropic) return "claude-3-5-sonnet-20241022";
+      if (ProviderAvailability.openai) return "gpt-4o";
+      if (ProviderAvailability.gemini) return "gemini-1.5-pro";
+      if (ProviderAvailability.grok) return "grok-beta";
+      return env.DEFAULT_CLOUD_MODEL;
+    }
+    return env.OLLAMA_PRIMARY_MODEL;
   },
   /** Lightweight model for routing, emotion detection, quick classification */
   get FAST() {
-    return env.OLLAMA_FAST_MODEL; // Keep fast tasks local by default
+    if (env.LLM_PROVIDER === "cloud") {
+      if (ProviderAvailability.openai) return "gpt-4o-mini";
+      if (ProviderAvailability.anthropic) return "claude-3-haiku-20240307";
+      if (ProviderAvailability.gemini) return "gemini-1.5-flash";
+      return env.DEFAULT_CLOUD_MODEL;
+    }
+    return env.OLLAMA_FAST_MODEL;
   },
   /** Code-specialized model for all coding tasks */
   get CODER() {
-    if (ProviderAvailability.anthropic) return "claude-3-5-sonnet-20241022";
-    if (ProviderAvailability.openai) return "gpt-4o";
+    if (env.LLM_PROVIDER === "cloud") {
+      if (ProviderAvailability.anthropic) return "claude-3-5-sonnet-20241022";
+      if (ProviderAvailability.openai) return "gpt-4o";
+      if (ProviderAvailability.gemini) return "gemini-1.5-pro";
+      return env.DEFAULT_CLOUD_MODEL;
+    }
     return env.OLLAMA_CODER_MODEL;
   },
   /** Embedding model for semantic memory and RAG */

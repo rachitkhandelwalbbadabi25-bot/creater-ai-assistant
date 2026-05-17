@@ -2,7 +2,7 @@
 // src/memory/summarizer.ts — Conversation summarization and memory consolidation
 // ════════════════════════════════════════════════════════════════════════════════
 
-import { chat, type ChatMessage } from "@llm/ollama.js";
+import { chat, type ChatMessage } from "@llm/client.js";
 import { MEMORY_SUMMARY_PROMPT } from "@llm/prompts.js";
 import { Models, GenerationPresets } from "@config/models.js";
 import { getRecentMessages, cleanExpired as cleanMessages } from "./shortTerm.js";

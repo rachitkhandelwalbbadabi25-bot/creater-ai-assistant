@@ -45,7 +45,7 @@ async function main(): Promise<void> {
   log.info("═══════════════════════════════════════════════════");
 
   // 2. LLM Readiness Check
-  if (isLocal || env.LLM_PROVIDER === "local") {
+  if (isLocal) {
     log.info("Checking Ollama connection...");
     const health = await checkOllamaHealth();
     if (!health.ok) {

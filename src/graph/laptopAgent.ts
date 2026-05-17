@@ -3,7 +3,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 import type { GraphState } from "./state.js";
-import { chat, type ChatMessage } from "@llm/ollama.js";
+import { chat, type ChatMessage } from "@llm/client.js";
 import { SYSTEM_PROMPT, buildToolSelectionPrompt } from "@llm/prompts.js";
 import { GenerationPresets } from "@config/models.js";
 import { TOOL_REGISTRY, requiresConfirmation } from "@config/tools.js";

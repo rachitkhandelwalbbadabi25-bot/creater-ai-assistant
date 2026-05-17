@@ -20,6 +20,11 @@ export interface MLEmotionResult {
 // ─── Model State ──────────────────────────────────────────────────────────────────
 let classifier: any = null;
 let isLoading = false;
+export let mlAvailable = true;
+
+export function isMLAvailable(): boolean {
+  return mlAvailable;
+}
 
 // Label mapping: transformer output labels → our Mood types
 const LABEL_TO_MOOD: Record<string, Mood> = {
@@ -78,6 +83,7 @@ const MOOD_ENERGY: Record<Mood, EnergyLevel> = {
  */
 async function getClassifier(): Promise<any> {
   if (classifier) return classifier;
+  if (!mlAvailable) return null;
   if (isLoading) {
     // Wait for in-progress load
     while (isLoading) await new Promise((r) => setTimeout(r, 100));
@@ -87,28 +93,38 @@ async function getClassifier(): Promise<any> {
   isLoading = true;
   try {
     log.info("Loading emotion classifier model...");
-    const { pipeline } = await import("@xenova/transformers");
-
-    // SamLowe/roberta-base-go_emotions — small, fast, 28 emotion labels
-    classifier = await pipeline(
-      "text-classification",
-      "SamLowe/roberta-base-go_emotions",
-      { 
-        quantized: true, // Use quantized (int8) for speed
-        progress_callback: (info: any) => {
-          if (info.status === "progress") {
-            log.info(`Downloading Emotion model... ${(info.progress as number).toFixed(1)}%`);
+    
+    // Dynamic import and pipeline initialization with a 5 seconds timeout
+    const loadPromise = (async () => {
+      const { pipeline } = await import("@xenova/transformers");
+      return await pipeline(
+        "text-classification",
+        "SamLowe/roberta-base-go_emotions",
+        { 
+          quantized: true, // Use quantized (int8) for speed
+          progress_callback: (info: any) => {
+            if (info.status === "progress") {
+              log.info(`Downloading Emotion model... ${(info.progress as number).toFixed(1)}%`);
+            }
           }
-        }
-      } 
-    );
+        } 
+      );
+    })();
 
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("HuggingFace model load timed out after 5s")), 5000);
+    });
+
+    classifier = await Promise.race([loadPromise, timeoutPromise]);
     log.info("Emotion classifier loaded successfully");
+    mlAvailable = true;
     return classifier;
   } catch (e) {
     log.warn("Failed to load emotion classifier — falling back to keywords", {
       error: String(e),
     });
+    mlAvailable = false;
+    classifier = null;
     return null;
   } finally {
     isLoading = false;

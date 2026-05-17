@@ -3,7 +3,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 import { matchKeywords, type Mood, type EnergyLevel } from "./keywords.js";
-import { classifyEmotion } from "./xenova.js";
+import { classifyEmotion, isMLAvailable } from "./xenova.js";
 import { createLogger } from "@utils/logger.js";
 
 const log = createLogger("emotion/detector");
@@ -28,6 +28,24 @@ export interface EmotionDetection {
 export async function detectEmotion(text: string): Promise<EmotionDetection> {
   // ── Step 1: Keyword matching (instant) ──────────────────────────────────────
   const keywordResult = matchKeywords(text);
+
+  // If ML is not available, use only keyword-based detection and return default values
+  if (!isMLAvailable()) {
+    if (keywordResult) {
+      return {
+        mood: keywordResult.mood,
+        energy: keywordResult.energy,
+        confidence: keywordResult.weight,
+        source: "keyword",
+      };
+    }
+    return {
+      mood: "neutral",
+      energy: "medium",
+      confidence: 0.3,
+      source: "keyword",
+    };
+  }
 
   // ── Step 2: ML classification (fast, ~50ms) ────────────────────────────────
   const mlResult = await classifyEmotion(text);

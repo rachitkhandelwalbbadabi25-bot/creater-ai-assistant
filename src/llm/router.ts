@@ -58,6 +58,25 @@ const INTENT_TO_AGENT: Record<string, string> = {
   meta: "taskAgent",
 };
 
+// ─── Quick Keyword Route ─────────────────────────────────────────────────────────
+function quickKeywordRoute(message: string): IntentResult | null {
+  const msg = message.toLowerCase();
+  
+  if (msg.match(/task|todo|remind|deadline|schedule/))
+    return { intent: "task_management", confidence: 0.9, entities: {} };
+  
+  if (msg.match(/code|fix|bug|error|function|class|import/))
+    return { intent: "code_request", confidence: 0.9, entities: {} };
+  
+  if (msg.match(/open|close|run|execute|file|folder|browser/))
+    return { intent: "system_control", confidence: 0.9, entities: {} };
+  
+  if (msg.match(/hello|hi|hey|how are you|kya|bhai|hii|helo/))
+    return { intent: "chitchat", confidence: 0.95, entities: {} };
+
+  return null;
+}
+
 // ─── Classify Intent ──────────────────────────────────────────────────────────────
 /**
  * Uses the FAST model to quickly classify user intent.
@@ -67,26 +86,42 @@ export async function classifyIntent(
   userMessage: string
 ): Promise<Result<IntentResult>> {
   return safeAsync(async () => {
+    // Fast keyword routing — no LLM call needed
+    const quickRoute = quickKeywordRoute(userMessage);
+    if (quickRoute) {
+      log.info(`Quick route: ${quickRoute.intent} (keyword match)`);
+      return quickRoute;
+    }
+
     const messages: ChatMessage[] = [
       { role: "system", content: INTENT_CLASSIFICATION_PROMPT },
       { role: "user", content: userMessage },
     ];
 
     const response = await chat({
-      model: env.DEFAULT_MODEL || Models.FAST,
+      model: Models.FAST,
       messages,
-      options: GenerationPresets.classification,
-      format: "json",
+      options: { 
+        ...GenerationPresets.classification,
+        num_predict: 100,
+      },
+      // format: "json" removed — causes hang on small Ollama models
     });
 
-    // Parse JSON response
-    const parsed = JSON.parse(response) as IntentResult;
+    // Safe JSON parse with regex fallback
+    try {
+      const jsonMatch = response.match(/\{.*\}/s);
+      if (!jsonMatch) throw new Error("No JSON in response");
+      const parsed = JSON.parse(jsonMatch[0]) as IntentResult;
 
-    log.info(`Intent: ${parsed.intent} (${(parsed.confidence * 100).toFixed(0)}%)`, {
-      message: userMessage.slice(0, 80),
-    });
-
-    return parsed;
+      log.info(`Intent: ${parsed.intent} (${(parsed.confidence * 100).toFixed(0)}%)`, {
+        message: userMessage.slice(0, 80),
+      });
+      return parsed;
+    } catch {
+      // Fallback — don't crash, return default
+      return { intent: "chitchat", confidence: 0.5, entities: {} };
+    }
   });
 }
 

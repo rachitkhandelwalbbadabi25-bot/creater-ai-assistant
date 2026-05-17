@@ -5,7 +5,7 @@
 import { env } from "./index.js";
 
 // ─── Model Providers ─────────────────────────────────────────────────────────────
-export type ModelProvider = "ollama" | "anthropic" | "openai" | "grok" | "gemini";
+export type ModelProvider = "ollama" | "anthropic" | "openai" | "grok" | "gemini" | "deepseek";
 
 export interface ModelDefinition {
   id: string;
@@ -30,16 +30,43 @@ export const AvailableModels: Record<string, ModelDefinition> = {
   "grok-beta": { id: "grok-beta", provider: "grok", type: "reasoning", contextWindow: 128000 },
   "gemini-1.5-pro": { id: "gemini-1.5-pro", provider: "gemini", type: "reasoning", contextWindow: 2000000 },
   "gemini-1.5-flash": { id: "gemini-1.5-flash", provider: "gemini", type: "fast", contextWindow: 1000000 },
+  "deepseek-chat": { id: "deepseek-chat", provider: "deepseek", type: "reasoning", contextWindow: 64000 },
+  "deepseek-coder": { id: "deepseek-coder", provider: "deepseek", type: "coder", contextWindow: 64000 },
 };
 
 /**
  * Checks if a model ID corresponds to a local Ollama model.
  */
 export function isLocalModel(modelId: string): boolean {
-  const model = AvailableModels[modelId];
-  if (model) return model.provider === "ollama";
-  // Fallback heuristic for custom names
-  return modelId.includes(":") || modelId.startsWith("llama") || modelId.startsWith("qwen");
+  const provider = getProviderForModel(modelId);
+  return provider === "ollama";
+}
+
+/**
+ * Resolves the provider for any given model ID.
+ * Supports catalog lookups, standard prefixes, and falls back to configured provider or local.
+ */
+export function getProviderForModel(modelId: string): ModelProvider {
+  // 1. Catalog lookup
+  const def = AvailableModels[modelId];
+  if (def) return def.provider;
+
+  // 2. Prefix heuristics
+  const lower = modelId.toLowerCase();
+  if (lower.startsWith("claude-")) return "anthropic";
+  if (lower.startsWith("gpt-") || lower.startsWith("o1-") || lower.startsWith("o3-")) return "openai";
+  if (lower.startsWith("grok-")) return "grok";
+  if (lower.startsWith("gemini-")) return "gemini";
+  if (lower.startsWith("deepseek-")) return "deepseek";
+
+  // 3. Current active provider (if explicit)
+  const prov = env.LLM_PROVIDER;
+  if (prov !== "local" && prov !== "cloud") {
+    return prov as ModelProvider;
+  }
+
+  // 4. Default to local
+  return "ollama";
 }
 
 // ─── Provider Availability ───────────────────────────────────────────────────────
@@ -48,6 +75,7 @@ export const ProviderAvailability = {
   get openai() { return !!env.OPENAI_API_KEY; },
   get grok() { return !!env.GROK_API_KEY; },
   get gemini() { return !!env.GEMINI_API_KEY; },
+  get deepseek() { return !!env.DEEPSEEK_API_KEY; },
   get ollama() { return true; }, // Local is always available
 };
 
@@ -55,10 +83,18 @@ export const ProviderAvailability = {
 export const Models = {
   /** High-capability model for deep reasoning, planning, complex tasks */
   get PRIMARY() {
-    if (env.LLM_PROVIDER === "cloud") {
+    const prov = env.LLM_PROVIDER;
+    if (prov === "anthropic" && ProviderAvailability.anthropic) return "claude-3-5-sonnet-20241022";
+    if (prov === "openai" && ProviderAvailability.openai) return "gpt-4o";
+    if (prov === "gemini" && ProviderAvailability.gemini) return "gemini-1.5-pro";
+    if (prov === "grok" && ProviderAvailability.grok) return "grok-beta";
+    if (prov === "deepseek" && ProviderAvailability.deepseek) return "deepseek-chat";
+
+    if (prov === "cloud") {
       if (ProviderAvailability.anthropic) return "claude-3-5-sonnet-20241022";
       if (ProviderAvailability.openai) return "gpt-4o";
       if (ProviderAvailability.gemini) return "gemini-1.5-pro";
+      if (ProviderAvailability.deepseek) return "deepseek-chat";
       if (ProviderAvailability.grok) return "grok-beta";
       return env.DEFAULT_CLOUD_MODEL;
     }
@@ -66,17 +102,31 @@ export const Models = {
   },
   /** Lightweight model for routing, emotion detection, quick classification */
   get FAST() {
-    if (env.LLM_PROVIDER === "cloud") {
+    const prov = env.LLM_PROVIDER;
+    if (prov === "openai" && ProviderAvailability.openai) return "gpt-4o-mini";
+    if (prov === "anthropic" && ProviderAvailability.anthropic) return "claude-3-haiku-20240307";
+    if (prov === "gemini" && ProviderAvailability.gemini) return "gemini-1.5-flash";
+    if (prov === "deepseek" && ProviderAvailability.deepseek) return "deepseek-chat";
+
+    if (prov === "cloud") {
       if (ProviderAvailability.openai) return "gpt-4o-mini";
       if (ProviderAvailability.anthropic) return "claude-3-haiku-20240307";
       if (ProviderAvailability.gemini) return "gemini-1.5-flash";
+      if (ProviderAvailability.deepseek) return "deepseek-chat";
       return env.DEFAULT_CLOUD_MODEL;
     }
     return env.OLLAMA_FAST_MODEL;
   },
   /** Code-specialized model for all coding tasks */
   get CODER() {
-    if (env.LLM_PROVIDER === "cloud") {
+    const prov = env.LLM_PROVIDER;
+    if (prov === "deepseek" && ProviderAvailability.deepseek) return "deepseek-chat";
+    if (prov === "anthropic" && ProviderAvailability.anthropic) return "claude-3-5-sonnet-20241022";
+    if (prov === "openai" && ProviderAvailability.openai) return "gpt-4o";
+    if (prov === "gemini" && ProviderAvailability.gemini) return "gemini-1.5-pro";
+
+    if (prov === "cloud") {
+      if (ProviderAvailability.deepseek) return "deepseek-chat";
       if (ProviderAvailability.anthropic) return "claude-3-5-sonnet-20241022";
       if (ProviderAvailability.openai) return "gpt-4o";
       if (ProviderAvailability.gemini) return "gemini-1.5-pro";

@@ -9,7 +9,7 @@
 
 import { chat as ollamaChat, chatStream as ollamaChatStream } from "./ollama.js";
 import { env } from "@config/index.js";
-import { AvailableModels, ProviderAvailability, type ModelProvider } from "@config/models.js";
+import { AvailableModels, ProviderAvailability, getProviderForModel, type ModelProvider } from "@config/models.js";
 import { createLogger } from "@utils/logger.js";
 import type { ChatMessage } from "./ollama.js";
 
@@ -26,8 +26,39 @@ export interface UnifiedChatOptions {
 
 // ─── Provider Detection ─────────────────────────────────────────────────────────
 function getProvider(modelId: string): ModelProvider {
-  const def = AvailableModels[modelId];
-  return def?.provider ?? "ollama";
+  return getProviderForModel(modelId);
+}
+
+// ─── OpenAI-Compatible Providers (OpenAI, Grok, DeepSeek) ───────────────────────
+async function callOpenAICompatible(
+  opts: UnifiedChatOptions,
+  baseUrl: string,
+  apiKey: string,
+  providerName: string
+): Promise<string> {
+  const body = {
+    model: opts.model,
+    messages: opts.messages,
+    max_tokens: opts.options?.num_predict ?? 4096,
+    temperature: opts.options?.temperature ?? 0.7,
+  };
+
+  const res = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`${providerName} API error ${res.status}: ${err}`);
+  }
+
+  const data = await res.json() as { choices: Array<{ message: { content: string } }> };
+  return data.choices[0]?.message?.content?.trim() ?? "";
 }
 
 // ─── Anthropic (Claude) ─────────────────────────────────────────────────────────
@@ -63,66 +94,6 @@ async function callAnthropic(opts: UnifiedChatOptions): Promise<string> {
 
   const data = await res.json() as { content: Array<{ type: string; text: string }> };
   return data.content.map(c => c.text).join("").trim();
-}
-
-// ─── OpenAI (GPT-4o) ────────────────────────────────────────────────────────────
-async function callOpenAI(opts: UnifiedChatOptions): Promise<string> {
-  const apiKey = env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error("OPENAI_API_KEY not set");
-
-  const body = {
-    model: opts.model,
-    messages: opts.messages,
-    max_tokens: opts.options?.num_predict ?? 4096,
-    temperature: opts.options?.temperature ?? 0.7,
-  };
-
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`OpenAI API error ${res.status}: ${err}`);
-  }
-
-  const data = await res.json() as { choices: Array<{ message: { content: string } }> };
-  return data.choices[0]?.message?.content?.trim() ?? "";
-}
-
-// ─── Grok (xAI) ─────────────────────────────────────────────────────────────────
-async function callGrok(opts: UnifiedChatOptions): Promise<string> {
-  const apiKey = env.GROK_API_KEY;
-  if (!apiKey) throw new Error("GROK_API_KEY not set");
-
-  const body = {
-    model: opts.model,
-    messages: opts.messages,
-    max_tokens: opts.options?.num_predict ?? 4096,
-    temperature: opts.options?.temperature ?? 0.7,
-  };
-
-  const res = await fetch("https://api.x.ai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Grok API error ${res.status}: ${err}`);
-  }
-
-  const data = await res.json() as { choices: Array<{ message: { content: string } }> };
-  return data.choices[0]?.message?.content?.trim() ?? "";
 }
 
 // ─── Gemini ──────────────────────────────────────────────────────────────────────
@@ -190,11 +161,15 @@ export async function chat(opts: UnifiedChatOptions): Promise<string> {
 
       case "openai":
         if (!ProviderAvailability.openai) throw new Error("OpenAI key not configured");
-        return await callOpenAI(opts);
+        return await callOpenAICompatible(opts, "https://api.openai.com/v1", env.OPENAI_API_KEY, "OpenAI");
 
       case "grok":
         if (!ProviderAvailability.grok) throw new Error("Grok key not configured");
-        return await callGrok(opts);
+        return await callOpenAICompatible(opts, "https://api.x.ai/v1", env.GROK_API_KEY, "Grok");
+
+      case "deepseek":
+        if (!ProviderAvailability.deepseek) throw new Error("DeepSeek key not configured");
+        return await callOpenAICompatible(opts, "https://api.deepseek.com/v1", env.DEEPSEEK_API_KEY, "DeepSeek");
 
       case "gemini":
         if (!ProviderAvailability.gemini) throw new Error("Gemini key not configured");

@@ -175,6 +175,12 @@ function runMigrations(): void {
       description TEXT,
       archived_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Settings store for dynamic config overrides
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
 
   log.info("All migrations applied successfully");

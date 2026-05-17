@@ -8,7 +8,7 @@ import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
 import { processMessage } from "@graph/supervisor.js";
 import { env } from "@config/index.js";
-import { AvailableModels } from "@config/models.js";
+import { AvailableModels, ProviderAvailability, Models } from "@config/models.js";
 import { setModelOverride, getModelOverride } from "@llm/router.js";
 import { getAllFacts } from "@memory/longTerm.js";
 import { getTopNodes, getGraphStats, getNodeWithEdges } from "@memory/graph.js";
@@ -131,15 +131,59 @@ function CreaterApp() {
     }
 
     if (trimmed.toLowerCase() === "/models") {
-      const modelList = Object.values(AvailableModels)
-        .map(m => `- ${m.id} [${m.provider}] (${m.type})`)
-        .join("\n");
       const currentOverride = getModelOverride();
-      const overrideStatus = currentOverride ? `\n\nCurrent manual override: ${currentOverride}` : `\n\nAuto-routing is ACTIVE.`;
       
+      const providers = [
+        { name: "Anthropic", key: "anthropic" },
+        { name: "OpenAI", key: "openai" },
+        { name: "DeepSeek", key: "deepseek" },
+        { name: "Gemini", key: "gemini" },
+        { name: "Grok", key: "grok" },
+      ];
+
+      const lines = [
+        "🤖 **CREATER MODEL STATUS & OVERRIDES**",
+        "══════════════════════════════════════════════════",
+        "🌐 **CLOUD PROVIDERS:**"
+      ];
+
+      for (const prov of providers) {
+        const isConfigured = (ProviderAvailability as any)[prov.key];
+        const statusText = isConfigured ? "🟢 Configured" : "🔴 Not Configured";
+        lines.push(`  • **${prov.name}** ─── [${statusText}]`);
+        
+        // Find models for this provider
+        const models = Object.values(AvailableModels).filter(m => m.provider === prov.key);
+        for (const m of models) {
+          const isActive = currentOverride === m.id || (!currentOverride && env.DEFAULT_MODEL === m.id);
+          const activeMarker = isActive ? " ➔ **ACTIVE**" : "";
+          lines.push(`    - ${m.id} (${m.type})${activeMarker}`);
+        }
+      }
+
+      lines.push("");
+      lines.push("💻 **LOCAL PROVIDERS:**");
+      lines.push("  • **Ollama** ─── [🟢 Connected]");
+      const localModels = Object.values(AvailableModels).filter(m => m.provider === "ollama");
+      for (const m of localModels) {
+        const isActive = currentOverride === m.id || (!currentOverride && env.DEFAULT_MODEL === m.id);
+        const activeMarker = isActive ? " ➔ **ACTIVE**" : "";
+        lines.push(`    - ${m.id} (${m.type})${activeMarker}`);
+      }
+
+      lines.push("══════════════════════════════════════════════════");
+      lines.push("⚙️ **ROUTING CONFIGURATION:**");
+      lines.push(`  • LLM Provider: ${env.LLM_PROVIDER}`);
+      lines.push(`  • Global Override: ${currentOverride ? `**${currentOverride}**` : "*None (Auto-Routing)*"}`);
+      
+      const primaryModel = env.DEFAULT_MODEL || Models.PRIMARY;
+      lines.push(`  • Active Primary Model: **${primaryModel}**`);
+      lines.push("");
+      lines.push("Type `/model <id>` to force a model, or `/model auto` to clear.");
+
       setMessages(prev => [...prev, {
         role: "assistant",
-        content: `🤖 Available Models:\n${modelList}${overrideStatus}\n\nType \`/model <id>\` to force a model, or \`/model auto\` to reset.`,
+        content: lines.join("\n"),
         timestamp: new Date()
       }]);
       setInput("");

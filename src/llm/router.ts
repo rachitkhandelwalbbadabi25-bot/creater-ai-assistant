@@ -6,6 +6,7 @@ import { chat, type ChatMessage } from "./client.js";
 import { INTENT_CLASSIFICATION_PROMPT } from "./prompts.js";
 import { Models, getModelForTask, getPresetForTask, GenerationPresets } from "@config/models.js";
 import { env } from "@config/index.js";
+import { setSetting } from "@config/settings.js";
 import { createLogger } from "@utils/logger.js";
 import { safeAsync, type Result } from "@utils/errorHandler.js";
 
@@ -27,19 +28,18 @@ export interface RouteDecision {
 }
 
 // ─── Manual Override State ────────────────────────────────────────────────────────
-let userSelectedModel: string | null = null;
-
+// ─── Manual Override State (Persisted in SQLite) ──────────────────────────────────
 export function setModelOverride(modelName: string | null) {
-  userSelectedModel = modelName;
+  setSetting("DEFAULT_MODEL", modelName || "");
   if (modelName) {
-    log.info(`Manual model override set to: ${modelName}`);
+    log.info(`Manual model override set and persisted to: ${modelName}`);
   } else {
-    log.info(`Manual model override cleared. Using auto-routing.`);
+    log.info(`Manual model override cleared and persisted. Using auto-routing.`);
   }
 }
 
 export function getModelOverride(): string | null {
-  return userSelectedModel;
+  return env.DEFAULT_MODEL || null;
 }
 
 // ─── Intent → Agent Mapping ───────────────────────────────────────────────────────
@@ -108,8 +108,8 @@ export async function routeRequest(
     const intent = intentResult.value;
 
     // Step 2: Select model and preset
-    // Preference: User Manual Override > .env DEFAULT_MODEL > Auto-routing
-    const model = userSelectedModel ?? env.DEFAULT_MODEL ?? getModelForTask(intent.intent);
+    // Preference: Persisted Override / DEFAULT_MODEL > Auto-routing
+    const model = env.DEFAULT_MODEL ?? getModelForTask(intent.intent);
     const preset = getPresetKeyForIntent(intent.intent);
 
     // Step 3: Select agent

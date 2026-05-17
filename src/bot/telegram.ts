@@ -8,7 +8,7 @@ import { processMessage } from "@graph/supervisor.js";
 import { onBriefingReady } from "@proactive/briefing.js";
 import { onNightCheckReady } from "@proactive/nightCheck.js";
 import { onAlertReady } from "@proactive/alerts.js";
-import { AvailableModels, ProviderAvailability } from "@config/models.js";
+import { AvailableModels, ProviderAvailability, Models } from "@config/models.js";
 import { setModelOverride, getModelOverride } from "@llm/router.js";
 import { getAllFacts } from "@memory/longTerm.js";
 import { getGraphStats, getTopNodes } from "@memory/graph.js";
@@ -69,29 +69,54 @@ export function startTelegramBot(): void {
 
   bot.command("models", async (ctx) => {
     const currentOverride = getModelOverride();
-    const providerStatus = [
-      `• Anthropic: ${ProviderAvailability.anthropic ? "✅ Configured" : "❌ No API Key"}`,
-      `• OpenAI: ${ProviderAvailability.openai ? "✅ Configured" : "❌ No API Key"}`,
-      `• Grok: ${ProviderAvailability.grok ? "✅ Configured" : "❌ No API Key"}`,
-      `• Gemini: ${ProviderAvailability.gemini ? "✅ Configured" : "❌ No API Key"}`,
-      `• Ollama (Local): ✅ Always available`,
-    ].join("\n");
+    const providers = [
+      { name: "Anthropic", key: "anthropic" },
+      { name: "OpenAI", key: "openai" },
+      { name: "DeepSeek", key: "deepseek" },
+      { name: "Gemini", key: "gemini" },
+      { name: "Grok", key: "grok" },
+    ];
 
-    const modelList = Object.values(AvailableModels)
-      .filter(m => m.type !== "embedding")
-      .map(m => `  \`${m.id}\` — ${m.provider} (${m.type})`)
-      .join("\n");
+    const lines = [
+      "🤖 *CREATER MODEL STATUS & OVERRIDES*",
+      "═══════════════════════════════════",
+      "🌐 *CLOUD PROVIDERS:*"
+    ];
 
-    const activeInfo = currentOverride
-      ? `🔒 Active override: \`${currentOverride}\`\nType /model auto to reset.`
-      : `⚡ Auto-routing ACTIVE (smart model selection).`;
+    for (const prov of providers) {
+      const isConfigured = (ProviderAvailability as any)[prov.key];
+      const statusText = isConfigured ? "🟢 Configured" : "🔴 Not Configured";
+      lines.push(`  • *${prov.name}* ─── [${statusText}]`);
+      
+      const models = Object.values(AvailableModels).filter(m => m.provider === prov.key);
+      for (const m of models) {
+        const isActive = currentOverride === m.id || (!currentOverride && env.DEFAULT_MODEL === m.id);
+        const activeMarker = isActive ? " ➔ *ACTIVE*" : "";
+        lines.push(`    - \`${m.id}\` (${m.type})${activeMarker}`);
+      }
+    }
 
-    await ctx.reply(
-      `🤖 **Model Status:**\n\n${activeInfo}\n\n` +
-      `**Providers:**\n${providerStatus}\n\n` +
-      `**Available Models:**\n${modelList}`,
-      { parse_mode: "Markdown" }
-    );
+    lines.push("");
+    lines.push("💻 *LOCAL PROVIDERS:*");
+    lines.push("  • *Ollama* ─── [🟢 Connected]");
+    const localModels = Object.values(AvailableModels).filter(m => m.provider === "ollama");
+    for (const m of localModels) {
+      const isActive = currentOverride === m.id || (!currentOverride && env.DEFAULT_MODEL === m.id);
+      const activeMarker = isActive ? " ➔ *ACTIVE*" : "";
+      lines.push(`    - \`${m.id}\` (${m.type})${activeMarker}`);
+    }
+
+    lines.push("═══════════════════════════════════");
+    lines.push("⚙️ *ROUTING CONFIGURATION:*");
+    lines.push(`  • LLM Provider: \`${env.LLM_PROVIDER}\``);
+    lines.push(`  • Global Override: ${currentOverride ? `*\`${currentOverride}\`*` : "_None (Auto-Routing)_"}`);
+    
+    const primaryModel = env.DEFAULT_MODEL || Models.PRIMARY;
+    lines.push(`  • Active Primary Model: \`${primaryModel}\``);
+    lines.push("");
+    lines.push("Type `/model <id>` to force a model, or `/model auto` to clear.");
+
+    await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
   });
 
   bot.command("model", async (ctx) => {

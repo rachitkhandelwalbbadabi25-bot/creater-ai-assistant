@@ -44,7 +44,7 @@ async function main(): Promise<void> {
   log.info(`  Timezone: ${env.USER_TIMEZONE}`);
   
   const primaryModel = env.DEFAULT_MODEL || Models.PRIMARY;
-  const isLocal = isLocalModel(primaryModel);
+  const isLocal = isLocalModel(primaryModel) && env.LLM_PROVIDER !== "cloud";
   log.info(`  Active Model: ${primaryModel} [${isLocal ? "LOCAL" : "CLOUD"}]`);
   log.info("═══════════════════════════════════════════════════");
 
@@ -53,24 +53,36 @@ async function main(): Promise<void> {
     log.info("Checking Ollama connection...");
     const health = await checkOllamaHealth();
     if (!health.ok) {
-      log.error("Ollama is not reachable!", health.error);
-      log.error("Please start Ollama: `ollama serve` or `docker compose up -d` (since you are using a local model)");
-      process.exit(1);
-    }
-    const ollamaModels = health.value;
-    log.info(`Ollama connected — ${ollamaModels.length} models available`);
+      const hasCloudKey = !!(
+        env.ANTHROPIC_API_KEY ||
+        env.OPENAI_API_KEY ||
+        env.DEEPSEEK_API_KEY ||
+        env.GEMINI_API_KEY ||
+        env.GROK_API_KEY
+      );
+      if (hasCloudKey) {
+        log.warn("Ollama is not reachable, but cloud API keys were detected! Proceeding with cloud models...");
+      } else {
+        log.error("Ollama is not reachable and no cloud API keys are configured!", health.error);
+        log.error("Please start Ollama: `ollama serve` or `docker compose up -d` or configure a cloud API key in your .env");
+        process.exit(1);
+      }
+    } else {
+      const ollamaModels = health.value;
+      log.info(`Ollama connected — ${ollamaModels.length} models available`);
 
-    // Ensure required local models are pulled
-    log.info("Ensuring required local models are available...");
-    try {
-      if (isLocalModel(Models.FAST)) await ensureModel(Models.FAST);
-      if (isLocalModel(Models.PRIMARY)) await ensureModel(Models.PRIMARY);
-      
-      // Optional models
-      if (isLocalModel(Models.CODER)) ensureModel(Models.CODER).catch(() => {});
-      if (isLocalModel(Models.EMBED)) ensureModel(Models.EMBED).catch(() => {});
-    } catch (e) {
-      log.warn("Failed to ensure some models - continuing anyway.");
+      // Ensure required local models are pulled
+      log.info("Ensuring required local models are available...");
+      try {
+        if (isLocalModel(Models.FAST)) await ensureModel(Models.FAST);
+        if (isLocalModel(Models.PRIMARY)) await ensureModel(Models.PRIMARY);
+        
+        // Optional models
+        if (isLocalModel(Models.CODER)) ensureModel(Models.CODER).catch(() => {});
+        if (isLocalModel(Models.EMBED)) ensureModel(Models.EMBED).catch(() => {});
+      } catch (e) {
+        log.warn("Failed to ensure some models - continuing anyway.");
+      }
     }
   } else {
     log.info(`Cloud Provider detected (${primaryModel}) — skipping Ollama check.`);

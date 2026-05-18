@@ -45,7 +45,7 @@ export async function dispatchTool(toolId: string, params: any): Promise<any> {
         try {
           return await browserTools.navigateToUrl(params.url);
         } catch (err) {
-          log.warn(`Playwright failed for ${params.url}, falling back to OS shell`, err);
+          log.warn(`Playwright failed for ${params.url}, falling back to OS shell`, { error: String(err) });
           const platform = process.platform;
           let cmd = "";
           if (platform === "win32") cmd = `start ${params.url}`;

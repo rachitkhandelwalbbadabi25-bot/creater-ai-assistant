@@ -13,15 +13,15 @@ interface Message {
   timestamp: Date;
 }
 
-export default function ChatInterface({ appName = "Creater" }: { appName?: string }) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      role: "assistant",
-      content: "👋 Hello! Main Creater hoon. Aaj hum kya banayenge?",
-      timestamp: new Date(),
-    },
-  ]);
+export default function ChatInterface({ 
+  appName = "Creater",
+  messages,
+  setMessages
+}: { 
+  appName?: string;
+  messages: Message[];
+  setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+}) {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -59,7 +59,7 @@ export default function ChatInterface({ appName = "Creater" }: { appName?: strin
       setMessages((prev) => [...prev, {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: "😅 Sorry, kuch error aa gaya. Please try again!",
+        content: result.error || "😅 Sorry, kuch error aa gaya. Please try again!",
         timestamp: new Date(),
       }]);
     }

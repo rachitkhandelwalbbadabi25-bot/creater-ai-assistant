@@ -15,7 +15,11 @@ export async function chatAction(message: string) {
     return { success: true, response };
   } catch (error: any) {
     console.error("Chat Action Error:", error);
-    return { success: false, error: error.message };
+    let errorMessage = error.message;
+    if (errorMessage && errorMessage.toLowerCase().includes("not found")) {
+      errorMessage = `Model not found error: ${errorMessage}. Please check your model configuration.`;
+    }
+    return { success: false, error: errorMessage };
   }
 }
 

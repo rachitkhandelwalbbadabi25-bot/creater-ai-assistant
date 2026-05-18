@@ -25,7 +25,7 @@ const EnvSchema = z.object({
   // Ollama
   OLLAMA_BASE_URL: z.string().url().default("http://localhost:11434"),
   OLLAMA_TIMEOUT_MS: z.coerce.number().default(120000),
-  OLLAMA_PRIMARY_MODEL: z.string().default("qwen2.5:14b"),
+  OLLAMA_PRIMARY_MODEL: z.string().default("qwen2.5:3b"),
   OLLAMA_FAST_MODEL: z.string().default("qwen2.5:3b"),
   OLLAMA_CODER_MODEL: z.string().default("qwen2.5-coder:7b"),
   OLLAMA_EMBED_MODEL: z.string().default("nomic-embed-text:latest"),

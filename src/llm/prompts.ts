@@ -123,7 +123,11 @@ export function buildToolSelectionPrompt(availableTools: string[]): string {
 ${availableTools.map((t) => `- ${t}`).join("\n")}
 
 Based on the user's request, decide which tool(s) to use.
-Respond with JSON: {"tools": [{"id": "<tool_id>", "params": {}}], "reasoning": "<why>"}
+CRITICAL INSTRUCTION: You must actually output the tool call to perform the action. Do not just say you will do it.
+- If the user says "open youtube", use browser.navigate with URL "https://www.youtube.com" (or shell.execute with "start https://www.youtube.com" on Windows).
+- If the user says "play [song name]", use browser.navigate with URL "https://www.youtube.com/results?search_query=[song+name]".
+
+Respond with JSON ONLY: {"tools": [{"id": "<tool_id>", "params": {}}], "reasoning": "<why>"}
 If no tool is needed, respond: {"tools": [], "reasoning": "No tool needed — answering directly."}`;
 }
 

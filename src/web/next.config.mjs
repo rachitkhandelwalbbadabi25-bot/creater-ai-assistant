@@ -6,7 +6,29 @@ const __dirname = path.dirname(__filename);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  turbopack: {},
+  turbopack: {
+    resolveAlias: {
+      // Direct extension mapping for Turbopack resolving .js imports to TS files using relative paths to bypass Windows absolute path limitations
+      "@graph/supervisor.js": "../../src/graph/supervisor.ts",
+      "@utils/stats.js": "../../src/utils/stats.ts",
+      "@tools/laptop/system.js": "../../src/tools/laptop/system.ts",
+      "@memory/db.js": "../../src/memory/db.ts",
+      "@config/index.js": "../../src/config/index.ts",
+      
+      // Base path mappings for Turbopack using relative paths
+      "@graph": "../../src/graph",
+      "@memory": "../../src/memory",
+      "@utils": "../../src/utils",
+      "@tools": "../../src/tools",
+      "@config": "../../src/config",
+      "@llm": "../../src/llm",
+      "@emotion": "../../src/emotion",
+      "@proactive": "../../src/proactive",
+      "@bot": "../../src/bot",
+      "@voice": "../../src/voice",
+      "@tui": "../../src/tui",
+    }
+  },
   webpack: (config) => {
     config.resolve.alias = {
       ...config.resolve.alias,

@@ -19,8 +19,8 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
   // Get relevant tools for this intent
   const toolNames = TOOL_REGISTRY
     .filter(t => {
-      if (state.intent === "system_control") return t.category === "system" || t.category === "shell";
-      if (state.intent === "browser_action") return t.category === "browser";
+      if (state.intent === "system_control") return t.category === "system" || t.category === "shell" || t.category === "browser";
+      if (state.intent === "browser_action") return t.category === "browser" || t.category === "shell";
       if (state.intent === "file_operation") return t.category === "filesystem";
       return true;
     })
@@ -44,7 +44,8 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
   // Check for tool calls and execute if safe
   let executionResults: any[] = [];
   try {
-    const parsed = JSON.parse(response);
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : response);
     if (parsed.tools?.length > 0) {
       for (const toolCall of parsed.tools) {
         const toolDef = TOOL_REGISTRY.find(t => t.id === toolCall.id);

@@ -1,7 +1,8 @@
 {
   "compilerOptions": {
-    "target": "ES2017",
+    "target": "ES2022",
     "lib": ["dom", "dom.iterable", "esnext"],
+    "types": ["bun-types"],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -29,7 +30,9 @@
       "@proactive/*": ["../../src/proactive/*"],
       "@voice/*": ["../../src/voice/*"],
       "@skills/*": ["../../src/skills/*"],
-      "@utils/*": ["../../src/utils/*"]
+      "@utils/*": ["../../src/utils/*"],
+      "@bot/*": ["../../src/bot/*"],
+      "@tui/*": ["../../src/tui/*"]
     }
   },
   "include": [

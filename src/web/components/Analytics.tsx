@@ -45,12 +45,12 @@ export default function Analytics() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const fetch = async () => {
+    const fetchData = async () => {
       const res = await getAnalyticsAction();
       if (res.success) setData(res.data);
       setIsLoading(false);
     };
-    fetch();
+    fetchData();
   }, []);
 
   if (isLoading) return <div className="p-8 text-zinc-500 animate-pulse font-bold uppercase tracking-widest text-xs">Loading Analytics...</div>;

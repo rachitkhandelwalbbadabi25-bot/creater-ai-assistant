@@ -19,12 +19,12 @@ export default function Sidebar({ activeTab, setActiveTab }: { activeTab: string
   const [metrics, setMetrics] = useState<any>(null);
 
   useEffect(() => {
-    const fetch = async () => {
+    const fetchData = async () => {
       const res = await getStatusAction();
       if (res.success) setMetrics(res.data);
     };
-    fetch();
-    const timer = setInterval(fetch, 10000);
+    fetchData();
+    const timer = setInterval(fetchData, 10000);
     return () => clearInterval(timer);
   }, []);
 

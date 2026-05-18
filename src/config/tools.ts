@@ -104,7 +104,7 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
     name: "Execute Shell Command",
     description: "Run a sandboxed shell command. Commands are validated before execution.",
     category: "shell",
-    permission: "sensitive",
+    permission: "dangerous",
     parameters: {
       command: { type: "string", description: "Shell command to run", required: true },
       cwd: { type: "string", description: "Working directory", required: false, default: "." },

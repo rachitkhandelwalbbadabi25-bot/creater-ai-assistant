@@ -75,9 +75,21 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
 
       // If we executed tools, generate a new response based on results
       if (executionResults.length > 0) {
-        const resultResponse = `✅ Tools executed: ${executionResults.map(r => r.tool).join(", ")}\n\nResults:\n${JSON.stringify(executionResults, null, 2)}`;
-        addMessage("assistant", resultResponse, state.channel);
-        return { ...state, response: resultResponse, currentStep: "done" };
+        const friendlyMessages: ChatMessage[] = [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: state.currentInput },
+          { role: "assistant", content: `I executed these tools: ${JSON.stringify(executionResults)}` },
+          { role: "user", content: "Now give a short friendly response in the same language the user used, confirming what was done." }
+        ];
+
+        const friendlyResponse = await chat({
+          model: state.selectedModel,
+          messages: friendlyMessages,
+          options: GenerationPresets.conversational,
+        });
+
+        addMessage("assistant", friendlyResponse, state.channel);
+        return { ...state, response: friendlyResponse, currentStep: "done" };
       }
     }
   } catch (err) {

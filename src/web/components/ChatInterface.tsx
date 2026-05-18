@@ -113,7 +113,7 @@ export default function ChatInterface({ appName = "Creater" }: { appName?: strin
               )}>
                 {msg.content}
               </div>
-              <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest px-1">
+              <span suppressHydrationWarning className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest px-1">
                 {dayjs(msg.timestamp).format("HH:mm")}
               </span>
             </div>

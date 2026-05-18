@@ -98,18 +98,18 @@ export async function classifyIntent(
       { role: "user", content: userMessage },
     ];
 
-    const response = await chat({
-      model: Models.FAST,
-      messages,
-      options: { 
-        ...GenerationPresets.classification,
-        num_predict: 100,
-      },
-      // format: "json" removed — causes hang on small Ollama models
-    });
-
-    // Safe JSON parse with regex fallback
     try {
+      const response = await chat({
+        model: Models.FAST,
+        messages,
+        options: { 
+          ...GenerationPresets.classification,
+          num_predict: 100,
+        },
+        // format: "json" removed — causes hang on small Ollama models
+      });
+
+      // Safe JSON parse with regex fallback
       const jsonMatch = response.match(/\{.*\}/s);
       if (!jsonMatch) throw new Error("No JSON in response");
       const parsed = JSON.parse(jsonMatch[0]) as IntentResult;
@@ -118,8 +118,9 @@ export async function classifyIntent(
         message: userMessage.slice(0, 80),
       });
       return parsed;
-    } catch {
+    } catch (e) {
       // Fallback — don't crash, return default
+      log.warn(`Intent classification failed: ${e instanceof Error ? e.message : String(e)}. Falling back to chitchat.`);
       return { intent: "chitchat", confidence: 0.5, entities: {} };
     }
   });

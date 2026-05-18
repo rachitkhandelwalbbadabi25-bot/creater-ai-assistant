@@ -197,7 +197,16 @@ export async function chatStream(
   const provider = getProvider(opts.model);
 
   if (provider === "ollama") {
-    return ollamaChatStream(opts as any, onToken);
+    try {
+      return await ollamaChatStream(opts as any, onToken);
+    } catch (err) {
+      log.error(`Local Ollama stream failed for model ${opts.model}: ${err}. Falling back to default model.`);
+      const fallbackModel = env.DEFAULT_MODEL || "qwen2.5:3b";
+      if (opts.model === fallbackModel) {
+        throw err;
+      }
+      return await ollamaChatStream({ ...opts, model: fallbackModel } as any, onToken);
+    }
   }
 
   // Cloud models: call non-streaming, emit full response as a single token chunk

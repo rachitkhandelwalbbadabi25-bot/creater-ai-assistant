@@ -42,7 +42,17 @@ export async function dispatchTool(toolId: string, params: any): Promise<any> {
 
       // ── Browser ──
       case "browser.navigate":
-        return await browserTools.navigateToUrl(params.url);
+        try {
+          return await browserTools.navigateToUrl(params.url);
+        } catch (err) {
+          log.warn(`Playwright failed for ${params.url}, falling back to OS shell`, err);
+          const platform = process.platform;
+          let cmd = "";
+          if (platform === "win32") cmd = `start ${params.url}`;
+          else if (platform === "darwin") cmd = `open ${params.url}`;
+          else cmd = `xdg-open ${params.url}`;
+          return await shellTools.executeCommand(cmd);
+        }
       case "browser.extract_text":
         return await browserTools.extractText(params.url);
       case "browser.screenshot":

@@ -46,8 +46,12 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
   try {
     const jsonMatch = response.match(/\{[\s\S]*\}/);
     const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : response);
+    
+    log.info("Parsed tools:", JSON.stringify(parsed.tools));
+    
     if (parsed.tools?.length > 0) {
       for (const toolCall of parsed.tools) {
+        log.info("Executing tool:", toolCall.id);
         const toolDef = TOOL_REGISTRY.find(t => t.id === toolCall.id);
         if (!toolDef) continue;
 

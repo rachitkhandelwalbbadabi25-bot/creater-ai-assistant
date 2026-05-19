@@ -3,7 +3,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 import React, { useState, useCallback, useEffect } from "react";
-import { render, Box, Text, useInput, useApp, Newline, Static, Transform } from "ink";
+import { render, Box, Text, useInput, useApp, Newline } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
 import { processMessage } from "@graph/supervisor.js";
@@ -258,27 +258,16 @@ function CreaterApp() {
     setIsThinking(true);
 
     try {
-      let streamingContent = "";
-      setMessages((prev) => [...prev, { role: "assistant", content: "", timestamp: new Date() }]);
+      const response = await processMessage(trimmed, "tui");
 
-      const response = await processMessage(trimmed, "tui", (token) => {
-        streamingContent += token;
-        setMessages((prev) => {
-          const updated = [...prev];
-          const last = updated[updated.length - 1];
-          if (last && last.role === "assistant") {
-            last.content = streamingContent;
-          }
-          return updated;
-        });
-      });
-      
-      setMessages((prev) => {
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
-        if (last && last.role === "assistant") last.content = response;
-        return updated;
-      });
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: response || "Kuch samajh nahi aaya, dobara try karo!",
+          timestamp: new Date(),
+        },
+      ]);
     } catch {
       setMessages((prev) => [...prev, {
         role: "assistant",

@@ -21,6 +21,7 @@ export const AvailableModels: Record<string, ModelDefinition> = {
   [env.OLLAMA_PRIMARY_MODEL]: { id: env.OLLAMA_PRIMARY_MODEL, provider: "ollama", type: "reasoning" },
   [env.OLLAMA_CODER_MODEL]: { id: env.OLLAMA_CODER_MODEL, provider: "ollama", type: "coder" },
   [env.OLLAMA_EMBED_MODEL]: { id: env.OLLAMA_EMBED_MODEL, provider: "ollama", type: "embedding" },
+  "qwen2.5:7b": { id: "qwen2.5:7b", provider: "ollama", type: "coder" },
   
   // Cloud Models
   "claude-3-5-sonnet-20241022": { id: "claude-3-5-sonnet-20241022", provider: "anthropic", type: "reasoning", contextWindow: 200000 },
@@ -98,7 +99,7 @@ export const Models = {
       if (ProviderAvailability.grok) return "grok-beta";
       return env.DEFAULT_CLOUD_MODEL;
     }
-    return env.OLLAMA_PRIMARY_MODEL;
+    return env.OLLAMA_PRIMARY_MODEL || "qwen2.5:3b";
   },
   /** Lightweight model for routing, emotion detection, quick classification */
   get FAST() {
@@ -115,7 +116,7 @@ export const Models = {
       if (ProviderAvailability.deepseek) return "deepseek-chat";
       return env.DEFAULT_CLOUD_MODEL;
     }
-    return env.OLLAMA_FAST_MODEL;
+    return env.OLLAMA_FAST_MODEL || "qwen2.5:3b";
   },
   /** Code-specialized model for all coding tasks */
   get CODER() {
@@ -132,7 +133,7 @@ export const Models = {
       if (ProviderAvailability.gemini) return "gemini-1.5-pro";
       return env.DEFAULT_CLOUD_MODEL;
     }
-    return env.OLLAMA_CODER_MODEL;
+    return "qwen2.5:7b";
   },
   /** Embedding model for semantic memory and RAG */
   get EMBED() {

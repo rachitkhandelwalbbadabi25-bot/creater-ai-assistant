@@ -39,7 +39,6 @@ const SUSPICIOUS_PATTERNS = [
   /net\s+stop/i,
   /sc\s+delete/i,
   /attrib\s+-r/i,
-  /cmd\s+\/c/i,
 ];
 
 export type RiskLevel = "safe" | "low" | "medium" | "high" | "critical";
@@ -56,6 +55,18 @@ export interface SafetyCheck {
  */
 export function validateCommand(command: string): SafetyCheck {
   const cmd = command.trim();
+
+  const SAFE_COMMANDS = [
+    /^start\s+https?:\/\//i,      // Windows open URL
+    /^open\s+https?:\/\//i,       // Mac open URL  
+    /^xdg-open\s+https?:\/\//i,   // Linux open URL
+  ];
+
+  for (const pattern of SAFE_COMMANDS) {
+    if (pattern.test(cmd)) {
+      return { allowed: true, riskLevel: "safe", reason: "Safe URL open command", requiresConfirmation: false };
+    }
+  }
 
   // Check blocked commands (always denied)
   for (const pattern of BLOCKED_COMMANDS) {

@@ -230,6 +230,136 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
       message: { type: "string", description: "Commit message", required: true },
     },
   },
+
+  // ── Computer Control Tools ───────────────────────────────────────────────────
+  {
+    id: "computer.open_browser",
+    name: "Open Browser",
+    description: "Open a browser window to a URL",
+    category: "browser",
+    permission: "safe",
+    parameters: {
+      url: { type: "string", description: "Optional URL to open initially", required: false }
+    }
+  },
+  {
+    id: "computer.navigate",
+    name: "Navigate Browser",
+    description: "Navigate browser to a URL",
+    category: "browser",
+    permission: "safe",
+    parameters: {
+      url: { type: "string", description: "URL to navigate to", required: true }
+    }
+  },
+  {
+    id: "computer.click",
+    name: "Mouse Click",
+    description: "Click at x,y coordinates on screen",
+    category: "browser",
+    permission: "safe",
+    parameters: {
+      x: { type: "number", description: "X coordinate to click", required: true },
+      y: { type: "number", description: "Y coordinate to click", required: true }
+    }
+  },
+  {
+    id: "computer.click_selector",
+    name: "Click Element",
+    description: "Click a specific element on the page",
+    category: "browser",
+    permission: "safe",
+    parameters: {
+      selector: { type: "string", description: "CSS selector of element to click", required: true }
+    }
+  },
+  {
+    id: "computer.type",
+    name: "Type Text",
+    description: "Type text on keyboard, optionally into a specific field",
+    category: "browser",
+    permission: "safe",
+    parameters: {
+      text: { type: "string", description: "Text to type", required: true },
+      selector: { type: "string", description: "Optional selector to focus before typing", required: false }
+    }
+  },
+  {
+    id: "computer.press_key",
+    name: "Press Key",
+    description: "Press a keyboard key like Enter, Escape, Tab",
+    category: "browser",
+    permission: "safe",
+    parameters: {
+      key: { type: "string", description: "Key to press", required: true }
+    }
+  },
+  {
+    id: "computer.shortcut",
+    name: "Keyboard Shortcut",
+    description: "Press keyboard shortcuts like Ctrl+C, Ctrl+V",
+    category: "browser",
+    permission: "safe",
+    parameters: {
+      shortcut: { type: "string", description: "Keyboard shortcut to press", required: true }
+    }
+  },
+  {
+    id: "computer.scroll",
+    name: "Scroll Page",
+    description: "Scroll page up or down",
+    category: "browser",
+    permission: "safe",
+    parameters: {
+      direction: { type: "string", description: "Scroll direction", required: true, enum: ["up", "down"] },
+      amount: { type: "number", description: "Scroll amount in pixels", required: false }
+    }
+  },
+  {
+    id: "computer.screenshot",
+    name: "Take Screenshot",
+    description: "Take screenshot of current browser page",
+    category: "browser",
+    permission: "safe",
+    parameters: {}
+  },
+  {
+    id: "computer.get_text",
+    name: "Read Page",
+    description: "Read text content of current page",
+    category: "browser",
+    permission: "safe",
+    parameters: {}
+  },
+  {
+    id: "computer.fill_form",
+    name: "Fill Form",
+    description: "Fill a form field with text",
+    category: "browser",
+    permission: "safe",
+    parameters: {
+      selector: { type: "string", description: "CSS selector of input field", required: true },
+      value: { type: "string", description: "Text value to fill", required: true }
+    }
+  },
+  {
+    id: "computer.play_youtube",
+    name: "Play YouTube",
+    description: "Search and play a video on YouTube",
+    category: "browser",
+    permission: "safe",
+    parameters: {
+      query: { type: "string", description: "Video or song name to search and play", required: true }
+    }
+  },
+  {
+    id: "computer.close_browser",
+    name: "Close Browser",
+    description: "Close the browser window",
+    category: "browser",
+    permission: "safe",
+    parameters: {}
+  },
 ];
 
 // ─── Lookup Helpers ───────────────────────────────────────────────────────────────

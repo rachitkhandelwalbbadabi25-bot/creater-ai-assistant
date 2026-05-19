@@ -7,6 +7,7 @@ import * as shellTools from "./laptop/executor.js";
 import * as systemTools from "./laptop/system.js";
 import * as browserTools from "./laptop/browser.js";
 import * as editorTools from "./laptop/editor.js";
+import * as computerTools from "./laptop/computer.js";
 import { ToolError } from "@utils/errorHandler.js";
 import { createLogger } from "@utils/logger.js";
 
@@ -65,6 +66,34 @@ export async function dispatchTool(toolId: string, params: any): Promise<any> {
         return await editorTools.gitStatus(params.repo_path);
       case "git.commit":
         return await editorTools.gitCommit(params.repo_path, params.message);
+
+      // ── Computer Control ──
+      case "computer.open_browser":
+        return await computerTools.openBrowser(params.url);
+      case "computer.navigate":
+        return await computerTools.navigateTo(params.url);
+      case "computer.click":
+        return await computerTools.clickAt(params.x, params.y);
+      case "computer.click_selector":
+        return await computerTools.clickSelector(params.selector);
+      case "computer.type":
+        return await computerTools.typeText(params.text, params.selector);
+      case "computer.press_key":
+        return await computerTools.pressKey(params.key);
+      case "computer.shortcut":
+        return await computerTools.keyboardShortcut(params.shortcut);
+      case "computer.scroll":
+        return await computerTools.scrollPage(params.direction, params.amount);
+      case "computer.screenshot":
+        return await computerTools.takeScreenshotOfPage();
+      case "computer.get_text":
+        return await computerTools.getPageText();
+      case "computer.fill_form":
+        return await computerTools.fillForm(params.selector, params.value);
+      case "computer.play_youtube":
+        return await computerTools.playYouTube(params.query);
+      case "computer.close_browser":
+        return await computerTools.closeBrowserWindow();
 
       default:
         throw new ToolError(toolId, `No implementation found for tool: ${toolId}`);

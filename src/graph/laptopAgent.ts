@@ -44,8 +44,37 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
   // Check for tool calls and execute if safe
   let executionResults: any[] = [];
   try {
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
-    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : response);
+    let parsed: any = { tools: [], reasoning: "" };
+    try {
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          parsed = JSON.parse(jsonMatch[0]);
+        } catch {
+          // Try to extract tools array manually if JSON is malformed
+          const toolsMatch = response.match(/"tools"\s*:\s*(\[[\s\S]*?\])/);
+          const reasoningMatch = response.match(/"reasoning"\s*:\s*"([^"]*)"/);
+          if (toolsMatch) {
+            try {
+              parsed.tools = JSON.parse(toolsMatch[1]);
+            } catch {
+              parsed.tools = [];
+            }
+          }
+          if (reasoningMatch) {
+            parsed.reasoning = reasoningMatch[1];
+          }
+        }
+      }
+    } catch {
+      parsed = { tools: [], reasoning: "" };
+    }
+
+    if (parsed.tools) {
+      parsed.tools = parsed.tools.filter(
+        (t: any) => t && typeof t === 'object' && t.id
+      );
+    }
     
     log.info("Parsed tools:", { tools: parsed.tools });
     

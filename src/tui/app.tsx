@@ -341,24 +341,30 @@ function CreaterApp() {
 
       {/* ─── Chat Window ──────────────────────────────────────────────────── */}
       <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor="cyan" paddingX={1}>
-        <Static items={messages}>
-          {(msg: ChatEntry, i: number) => (
+        <Box flexDirection="column">
+          {messages.slice(-10).map((msg: ChatEntry, i: number) => (
             <Box key={i} flexDirection="column" marginBottom={1}>
               <Box>
-                <Text bold color={msg.role === "user" ? "magenta" : "cyan"}>
-                  {msg.role === "user" ? "USER" : "CREATER"}
+                <Text bold color={
+                  msg.role === "user" ? "magenta" : 
+                  msg.role === "system" ? "gray" : "cyan"
+                }>
+                  {msg.role === "user" ? "YOU" : 
+                   msg.role === "system" ? "SYSTEM" : "CREATER"}
                 </Text>
                 <Text color="gray"> [{dayjs(msg.timestamp).format("HH:mm")}]</Text>
               </Box>
               <Box paddingLeft={2}>
-                <Text color={msg.role === "user" ? "white" : "cyanBright"}>{msg.content}</Text>
+                <Text wrap="wrap" color={msg.role === "user" ? "white" : "cyanBright"}>
+                  {msg.content || " "}
+                </Text>
               </Box>
-              <Box marginTop={0}>
-                <Text color="gray">{`─`.repeat(20)}</Text>
+              <Box>
+                <Text color="gray">{"─".repeat(20)}</Text>
               </Box>
             </Box>
-          )}
-        </Static>
+          ))}
+        </Box>
         
         {isThinking && (
           <Box marginLeft={1}>

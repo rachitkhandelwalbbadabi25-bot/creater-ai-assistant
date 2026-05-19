@@ -12,32 +12,37 @@ import { env } from "@config/index";
 export default function Home() {
   const [activeTab, setActiveTab] = useState("Chat");
 
-  const defaultWelcomeMessage = {
-    id: "1",
-    role: "assistant",
-    content: "👋 Hello! Main Creater hoon. Aaj hum kya banayenge?",
-    timestamp: new Date(),
+  const defaultMessage = {
+    id: "welcome",
+    role: "assistant" as const,
+    content: "👋 Hey! Main Creater hoon — tumhara personal AI assistant. Kuch bhi poocho!",
+    timestamp: new Date().toISOString(),
   };
 
-  const [messages, setMessages] = useState<any[]>(() => {
-    if (typeof window === 'undefined') return [defaultWelcomeMessage];
+  // Start with just welcome message (works on server too)
+  const [messages, setMessages] = useState<any[]>([defaultMessage]);
+  const [mounted, setMounted] = useState(false);
+
+  // Load from localStorage only after mount (client-side only)
+  useEffect(() => {
+    setMounted(true);
     try {
       const saved = localStorage.getItem('creater_chat_history');
       if (saved) {
         const parsed = JSON.parse(saved);
-        return parsed.map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }));
+        if (parsed && parsed.length > 0) {
+          setMessages(parsed);
+        }
       }
-      return [defaultWelcomeMessage];
-    } catch { 
-      return [defaultWelcomeMessage]; 
-    }
-  });
+    } catch { }
+  }, []);
 
+  // Save to localStorage on every message change
   useEffect(() => {
-    if (typeof window !== 'undefined' && messages.length > 1) {
+    if (mounted && messages.length > 1) {
       localStorage.setItem('creater_chat_history', JSON.stringify(messages.slice(-50)));
     }
-  }, [messages]);
+  }, [messages, mounted]);
 
   return (
     <main className="flex min-h-screen bg-zinc-950 text-zinc-200 selection:bg-cyan-500/30">

@@ -57,8 +57,7 @@ export function validateCommand(command: string): SafetyCheck {
   const cmd = command.trim();
 
   const SAFE_COMMANDS = [
-    /^start\s+https?:\/\//i,      // Windows open URL
-    /^open\s+https?:\/\//i,       // Mac open URL  
+    /^open\s+https?:\/\//i,       // Mac open URL
     /^xdg-open\s+https?:\/\//i,   // Linux open URL
   ];
 

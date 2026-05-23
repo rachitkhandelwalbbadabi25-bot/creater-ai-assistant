@@ -7,8 +7,6 @@ import MemoryExplorer from "@/components/MemoryExplorer";
 import Analytics from "@/components/Analytics";
 import Settings from "@/components/Settings";
 
-import { env } from "@config/index";
-
 export default function Home() {
   const [activeTab, setActiveTab] = useState("Chat");
 
@@ -51,7 +49,7 @@ export default function Home() {
       
       {/* Content Area */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        {activeTab === "Chat" && <ChatInterface appName={env.APP_NAME} messages={messages} setMessages={setMessages} />}
+        {activeTab === "Chat" && <ChatInterface appName="Creater" messages={messages} setMessages={setMessages} />}
         {activeTab === "Memory" && <MemoryExplorer />}
         {activeTab === "Analytics" && <Analytics />}
         {activeTab === "Settings" && <Settings />}

@@ -24,6 +24,7 @@ export default function ChatInterface({
 }) {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const isSubmittingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -33,7 +34,8 @@ export default function ChatInterface({
   }, [messages, isLoading]);
 
   const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isLoading || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
 
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -46,7 +48,13 @@ export default function ChatInterface({
     setInput("");
     setIsLoading(true);
 
-    const result = await chatAction(input);
+    let result;
+    try {
+      result = await chatAction(input);
+    } finally {
+      isSubmittingRef.current = false;
+      setIsLoading(false);
+    }
 
     if (result.success) {
       setMessages((prev) => [...prev, {
@@ -64,7 +72,6 @@ export default function ChatInterface({
       }]);
     }
 
-    setIsLoading(false);
   };
 
   return (

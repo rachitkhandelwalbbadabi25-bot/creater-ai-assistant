@@ -25,6 +25,15 @@ export async function executeCommand(
   cwd = ".",
   timeoutMs?: number
 ): Promise<ExecResult> {
+  const trimmedCommand = typeof command === "string" ? command.trim() : "";
+  if (process.platform === "win32" && /^start(?:\s|$)/i.test(trimmedCommand)) {
+    throw new ToolError(
+      "shell.execute",
+      "Windows 'start' launcher commands are disabled. Use system.open_app, system.open_path, or computer.open_browser instead.",
+      { command }
+    );
+  }
+
   // Safety check
   const safety = validateCommand(command);
   if (!safety.allowed) {

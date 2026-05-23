@@ -1,60 +1,161 @@
-// ════════════════════════════════════════════════════════════════════════════════
-// src/llm/ollama.ts — Ollama client wrapper with streaming, retries, and health check
-// ════════════════════════════════════════════════════════════════════════════════
+// -------------------------------------------------------------------------------
+// src/llm/ollama.ts - Ollama client wrapper with lifecycle logging and mutex
+// -------------------------------------------------------------------------------
 
 import { Ollama } from "ollama";
-import type { ChatRequest, ChatResponse, GenerateRequest, EmbedRequest } from "ollama";
+import type { ChatResponse } from "ollama";
 import { env } from "@config/index.js";
 import type { GenerationOptions } from "@config/models.js";
 import { createLogger } from "@utils/logger.js";
-import { LLMError, withRetry, safeAsync, type Result } from "@utils/errorHandler.js";
+import { LLMError, safeAsync, type Result, withRetry } from "@utils/errorHandler.js";
 import { withTimeout } from "@utils/helpers.js";
 
 const log = createLogger("llm/ollama");
 
-// ─── Singleton Ollama Client ──────────────────────────────────────────────────────
 const client = new Ollama({ host: env.OLLAMA_BASE_URL });
+log.info("Ollama client initialized", {
+  host: env.OLLAMA_BASE_URL,
+  timeoutMs: env.OLLAMA_TIMEOUT_MS,
+});
 
-// ─── Health Check ─────────────────────────────────────────────────────────────────
-/**
- * Checks if Ollama is running and reachable.
- * Returns list of loaded models on success.
- */
+let queueTail: Promise<void> = Promise.resolve();
+let activeOperations = 0;
+let operationSeq = 0;
+
+function toError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
+}
+
+function cleanMessage(message: string): string {
+  return message.replace(/%!w\(<nil>\)/g, "").replace(/\s{2,}/g, " ").trim();
+}
+
+function getErrorContext(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) {
+    return { error: String(error) };
+  }
+
+  const anyError = error as Error & Record<string, unknown>;
+  return {
+    name: error.name,
+    message: cleanMessage(error.message),
+    stack: error.stack,
+    code: anyError.code,
+    status: anyError.status,
+    cause:
+      anyError.cause instanceof Error
+        ? { message: anyError.cause.message, stack: anyError.cause.stack }
+        : anyError.cause,
+    response: anyError.response,
+    body: anyError.body,
+  };
+}
+
+function normalizeOllamaError(error: unknown, context: Record<string, unknown>): LLMError {
+  const message = cleanMessage(toError(error).message) || "Ollama request failed";
+  return new LLMError(message, { ...context, ...getErrorContext(error) });
+}
+
+async function withOllamaLock<T>(
+  operation: string,
+  context: Record<string, unknown>,
+  task: () => Promise<T>
+): Promise<T> {
+  const requestId = `${operation}-${++operationSeq}`;
+  const queuedAt = Date.now();
+
+  log.info("Ollama operation queued", {
+    requestId,
+    operation,
+    activeOperations,
+    ...context,
+  });
+
+  let release!: () => void;
+  const waitForTurn = queueTail;
+  queueTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await waitForTurn;
+
+  activeOperations++;
+  const startedAt = Date.now();
+  log.info("Ollama operation started", {
+    requestId,
+    operation,
+    waitMs: startedAt - queuedAt,
+    activeOperations,
+    ...context,
+  });
+
+  try {
+    const result = await task();
+    log.info("Ollama operation ended", {
+      requestId,
+      operation,
+      durationMs: Date.now() - startedAt,
+      activeOperations,
+      ...context,
+    });
+    return result;
+  } catch (error) {
+    const normalized = normalizeOllamaError(error, {
+      requestId,
+      operation,
+      durationMs: Date.now() - startedAt,
+      ...context,
+    });
+    log.error("Ollama operation failed", normalized, {
+      requestId,
+      operation,
+      ...getErrorContext(error),
+      ...context,
+    });
+    throw normalized;
+  } finally {
+    activeOperations = Math.max(0, activeOperations - 1);
+    release();
+  }
+}
+
+async function listOllamaModels(): Promise<string[]> {
+  const response = await withTimeout(client.list(), 5000, "Ollama health check");
+  return (response as any).models.map((m: any) => m.name);
+}
+
+// -------------------------------------------------------------------------------
+// Health Check
+// -------------------------------------------------------------------------------
+
 export async function checkOllamaHealth(): Promise<Result<string[]>> {
   return safeAsync(async () => {
-    const response = await withTimeout(client.list(), 5000, "Ollama health check");
-    const modelNames = (response as any).models.map((m: any) => m.name);
-    log.info(`Ollama connected — ${modelNames.length} models available`, {
-      models: modelNames,
+    return await withOllamaLock("health", { host: env.OLLAMA_BASE_URL }, async () => {
+      const modelNames = await listOllamaModels();
+      log.info("Ollama startup check complete", {
+        modelCount: modelNames.length,
+        models: modelNames,
+      });
+      return modelNames;
     });
-    return modelNames;
   });
 }
 
-/**
- * Ensures a specific model is available. Pulls it if missing.
- */
 export async function ensureModel(modelName: string): Promise<void> {
-  const health = await checkOllamaHealth();
-  if (!health.ok) {
-    throw new LLMError(`Ollama is not reachable: ${health.error.message}`);
-  }
-
-  const loaded = health.value.some((m) => m.startsWith(modelName.split(":")[0]!));
-  if (!loaded) {
-    log.info(`Model "${modelName}" not found — pulling...`);
-    try {
+  await withOllamaLock("ensureModel", { modelName }, async () => {
+    const healthModels = await listOllamaModels();
+    const loaded = healthModels.some((m) => m.startsWith(modelName.split(":")[0]!));
+    if (!loaded) {
+      log.info("Model pull starting", { modelName });
       await client.pull({ model: modelName, stream: false });
-      log.info(`Model "${modelName}" pulled successfully`);
-    } catch (e) {
-      throw new LLMError(`Failed to pull model "${modelName}"`, {
-        error: e instanceof Error ? e.message : String(e),
-      });
+      log.info("Model pull completed", { modelName });
     }
-  }
+  });
 }
 
-// ─── Chat Completion ──────────────────────────────────────────────────────────────
+// -------------------------------------------------------------------------------
+// Chat Completion
+// -------------------------------------------------------------------------------
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -69,145 +170,217 @@ export interface ChatOptions {
   stream?: false;
 }
 
-/**
- * Send a chat completion request to Ollama.
- * Retries up to 2 times on transient failures.
- */
 export async function chat(opts: ChatOptions): Promise<string> {
-  log.llm(`Chat request to ${opts.model}`, {
+  log.llm("Prompt received", {
+    operation: "chat",
+    model: opts.model,
     messageCount: opts.messages.length,
     lastMsg: opts.messages[opts.messages.length - 1]?.content.slice(0, 100),
+    format: opts.format ?? "text",
   });
 
-  const response = await withRetry(
-    async () => {
-      const result = await withTimeout(
-        client.chat({
+  return await withOllamaLock("chat", { model: opts.model, messageCount: opts.messages.length }, async () => {
+    const response = await withRetry(
+      async () => {
+        log.info("Chat inference started", {
           model: opts.model,
-          messages: opts.messages,
-          options: opts.options,
-          format: opts.format,
+          messageCount: opts.messages.length,
           stream: false,
-        } as any),
-        env.OLLAMA_TIMEOUT_MS,
-        `Chat with ${opts.model}`
-      );
-      return result as unknown as ChatResponse;
-    },
-    2,
-    1000
-  );
+        });
 
-  const content = response.message?.content ?? "";
+        const result = await withTimeout(
+          client.chat({
+            model: opts.model,
+            messages: opts.messages,
+            options: opts.options,
+            format: opts.format,
+            stream: false,
+          } as any),
+          env.OLLAMA_TIMEOUT_MS,
+          `Chat with ${opts.model}`
+        );
+        return result as unknown as ChatResponse;
+      },
+      2,
+      1000
+    );
 
-  log.llm(`Chat response from ${opts.model}`, {
-    tokens: response.eval_count,
-    duration: response.total_duration
-      ? `${(Number(response.total_duration) / 1e9).toFixed(2)}s`
-      : "unknown",
+    const content = response.message?.content ?? "";
+    log.info("Chat inference ended", {
+      model: opts.model,
+      tokens: response.eval_count,
+      duration:
+        response.total_duration != null
+          ? `${(Number(response.total_duration) / 1e9).toFixed(2)}s`
+          : "unknown",
+      stream: false,
+    });
+
+    return content.trim();
   });
-
-  return content.trim();
 }
 
-// ─── Streaming Chat ───────────────────────────────────────────────────────────────
-
-/**
- * Stream a chat completion token-by-token.
- * Calls `onToken` for each chunk and returns the full accumulated response.
- */
 export async function chatStream(
   opts: Omit<ChatOptions, "stream">,
   onToken: (token: string) => void
 ): Promise<string> {
-  log.llm(`Streaming chat to ${opts.model}`);
+  log.llm("Prompt received", {
+    operation: "chatStream",
+    model: opts.model,
+    messageCount: opts.messages.length,
+    lastMsg: opts.messages[opts.messages.length - 1]?.content.slice(0, 100),
+    stream: true,
+  });
 
-  const stream = (await withTimeout(
-    client.chat({
+  return await withOllamaLock("chatStream", { model: opts.model, messageCount: opts.messages.length }, async () => {
+    const stream = (await withTimeout(
+      client.chat({
+        model: opts.model,
+        messages: opts.messages,
+        options: opts.options,
+        stream: true,
+      } as any),
+      env.OLLAMA_TIMEOUT_MS,
+      `Chat stream connection with ${opts.model}`
+    )) as AsyncIterable<ChatResponse>;
+
+    log.info("Stream started", {
       model: opts.model,
-      messages: opts.messages,
-      options: opts.options,
       stream: true,
-    } as any),
-    env.OLLAMA_TIMEOUT_MS,
-    `Chat stream connection with ${opts.model}`
-  )) as AsyncIterable<ChatResponse>;
+      messageCount: opts.messages.length,
+    });
 
-  let full = "";
-  for await (const chunk of stream as AsyncIterable<ChatResponse>) {
-    const token = chunk.message?.content ?? "";
-    full += token;
-    onToken(token);
-  }
+    let full = "";
+    try {
+      for await (const chunk of stream as AsyncIterable<ChatResponse>) {
+        const token = chunk.message?.content ?? "";
+        full += token;
+        try {
+          onToken(token);
+        } catch (callbackError) {
+          log.warn("Token callback failed", {
+            model: opts.model,
+            error: callbackError instanceof Error ? callbackError.message : String(callbackError),
+          });
+        }
+      }
+    } catch (error) {
+      throw normalizeOllamaError(error, {
+        operation: "chatStream",
+        model: opts.model,
+        stream: true,
+      });
+    } finally {
+      log.info("Stream ended", {
+        model: opts.model,
+        stream: true,
+        outputChars: full.length,
+      });
+    }
 
-  return full.trim();
+    return full.trim();
+  });
 }
 
-// ─── Simple Generate (single prompt, no chat history) ─────────────────────────────
+// -------------------------------------------------------------------------------
+// Generate / Embeddings
+// -------------------------------------------------------------------------------
 
 export async function generate(
   model: string,
   prompt: string,
   options?: Partial<GenerationOptions>
 ): Promise<string> {
-  log.llm(`Generate request to ${model}`, { promptLen: prompt.length });
+  log.llm("Prompt received", { operation: "generate", model, promptLen: prompt.length });
 
-  const response = await withRetry(
-    async () => {
-      return await withTimeout(
-        client.generate({
+  return await withOllamaLock("generate", { model, promptLen: prompt.length }, async () => {
+    const response = await withRetry(
+      async () => {
+        log.info("Generate inference started", {
           model,
-          prompt,
-          options,
+          promptLen: prompt.length,
           stream: false,
-        } as any),
-        env.OLLAMA_TIMEOUT_MS,
-        `Generate with ${model}`
-      );
-    },
-    2,
-    1000
-  );
+        });
 
-  return (response as unknown as { response: string }).response?.trim() ?? "";
+        return await withTimeout(
+          client.generate({
+            model,
+            prompt,
+            options,
+            stream: false,
+          } as any),
+          env.OLLAMA_TIMEOUT_MS,
+          `Generate with ${model}`
+        );
+      },
+      2,
+      1000
+    );
+
+    const text = (response as unknown as { response: string }).response?.trim() ?? "";
+    log.info("Generate inference ended", {
+      model,
+      responseChars: text.length,
+      stream: false,
+    });
+    return text;
+  });
 }
 
-// ─── Embeddings ───────────────────────────────────────────────────────────────────
-
-/**
- * Generate embeddings for one or more text inputs.
- * Uses the configured embedding model (nomic-embed-text by default).
- */
-export async function embed(
-  texts: string | string[],
-  model?: string
-): Promise<number[][]> {
+export async function embed(texts: string | string[], model?: string): Promise<number[][]> {
   const input = Array.isArray(texts) ? texts : [texts];
   const embedModel = model ?? env.OLLAMA_EMBED_MODEL;
 
-  log.llm(`Embedding ${input.length} text(s) with ${embedModel}`);
+  log.llm("Prompt received", {
+    operation: "embed",
+    model: embedModel,
+    itemCount: input.length,
+  });
 
-  const response = await withRetry(
-    async () => {
-      return await client.embed({
-        model: embedModel,
-        input,
-      } as any);
-    },
-    2,
-    500
-  );
+  return await withOllamaLock("embed", { model: embedModel, itemCount: input.length }, async () => {
+    const response = await withRetry(
+      async () => {
+        log.info("Embedding started", {
+          model: embedModel,
+          itemCount: input.length,
+          stream: false,
+        });
+        return await client.embed({
+          model: embedModel,
+          input,
+        } as any);
+      },
+      2,
+      500
+    );
 
-  return (response as { embeddings: number[][] }).embeddings;
+    const embeddings = (response as { embeddings: number[][] }).embeddings;
+    log.info("Embedding ended", {
+      model: embedModel,
+      itemCount: input.length,
+      stream: false,
+    });
+    return embeddings;
+  });
 }
 
-/**
- * Generate a single embedding vector for one text.
- */
 export async function embedSingle(text: string, model?: string): Promise<number[]> {
   const results = await embed(text, model);
   return results[0]!;
 }
 
-// ─── Export client for advanced usage ─────────────────────────────────────────────
+export async function pullModel(
+  modelName: string,
+  onProgress?: (part: { status?: string; completed?: number; total?: number }) => void
+): Promise<void> {
+  await withOllamaLock("pull", { modelName }, async () => {
+    log.info("Model pull started", { modelName });
+    const stream = await client.pull({ model: modelName, stream: true });
+    for await (const part of stream as AsyncIterable<{ status?: string; completed?: number; total?: number }>) {
+      if (onProgress) onProgress(part);
+    }
+    log.info("Model pull ended", { modelName });
+  });
+}
+
 export { client as ollamaClient };

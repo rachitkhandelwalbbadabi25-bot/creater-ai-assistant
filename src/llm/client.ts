@@ -152,6 +152,13 @@ async function fallbackToLocal(opts: UnifiedChatOptions): Promise<string> {
 export async function chat(opts: UnifiedChatOptions): Promise<string> {
   const provider = getProvider(opts.model);
   log.info(`Chat → provider: ${provider}, model: ${opts.model}`);
+  log.info("Prompt received", {
+    provider,
+    model: opts.model,
+    messageCount: opts.messages.length,
+    format: opts.format ?? "text",
+    lastMsg: opts.messages[opts.messages.length - 1]?.content.slice(0, 120),
+  });
 
   try {
     switch (provider) {
@@ -195,6 +202,13 @@ export async function chatStream(
   onToken: (token: string) => void
 ): Promise<string> {
   const provider = getProvider(opts.model);
+  log.info("Prompt received", {
+    provider,
+    model: opts.model,
+    messageCount: opts.messages.length,
+    stream: true,
+    lastMsg: opts.messages[opts.messages.length - 1]?.content.slice(0, 120),
+  });
 
   if (provider === "ollama") {
     try {
@@ -213,10 +227,22 @@ export async function chatStream(
   try {
     const response = await chat(opts);
     onToken(response);
+    log.info("Stream ended", {
+      provider,
+      model: opts.model,
+      stream: false,
+      outputChars: response.length,
+    });
     return response;
   } catch (err) {
     const local = await fallbackToLocal(opts);
     onToken(local);
+    log.info("Stream ended", {
+      provider,
+      model: opts.model,
+      stream: false,
+      outputChars: local.length,
+    });
     return local;
   }
 }

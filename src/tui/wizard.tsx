@@ -9,7 +9,7 @@ import si from "systeminformation";
 import figlet from "figlet";
 import gradient from "gradient-string";
 import { setSetting } from "@config/settings.js";
-import { checkOllamaHealth, ollamaClient } from "@llm/ollama.js";
+import { checkOllamaHealth, pullModel } from "@llm/ollama.js";
 
 // ─── Setup Wizard Steps ──────────────────────────────────────────────────────────
 type StepType =
@@ -171,9 +171,7 @@ export function SetupWizard({ onComplete }: { onComplete: () => void }) {
     setKeyError(null);
 
     try {
-      const stream = await ollamaClient.pull({ model: recommendedModel, stream: true });
-
-      for await (const part of stream) {
+      await pullModel(recommendedModel, (part) => {
         if (part.status) {
           setDownloadStatus(part.status);
         }
@@ -182,7 +180,7 @@ export function SetupWizard({ onComplete }: { onComplete: () => void }) {
           setDownloadPercent(pct);
           setDownloadBytes({ completed: part.completed, total: part.total });
         }
-      }
+      });
 
       // Download Succeeded! Save config
       setSetting("LLM_PROVIDER", "local");

@@ -6,6 +6,7 @@ const __dirname = path.dirname(__filename);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  outputFileTracingRoot: path.resolve(__dirname, "../.."),
   turbopack: {
     resolveAlias: {
       // Direct extension mapping for Turbopack resolving .js imports to TS files using relative paths to bypass Windows absolute path limitations

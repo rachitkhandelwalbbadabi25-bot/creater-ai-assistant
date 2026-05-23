@@ -8,6 +8,7 @@ import * as systemTools from "./laptop/system.js";
 import * as browserTools from "./laptop/browser.js";
 import * as editorTools from "./laptop/editor.js";
 import * as computerTools from "./laptop/computer.js";
+import * as launcherTools from "./laptop/launcher.js";
 import { ToolError } from "@utils/errorHandler.js";
 import { createLogger } from "@utils/logger.js";
 
@@ -15,6 +16,9 @@ const log = createLogger("tools/dispatcher");
 
 export async function dispatchTool(toolId: string, params: any): Promise<any> {
   log.info(`Dispatching tool: ${toolId}`, params);
+  if (toolId.startsWith("system.open") || toolId.startsWith("computer.") || toolId === "browser.navigate") {
+    console.log("[LAUNCH TRACE]", "src/tools/dispatcher.ts", "dispatchTool", { toolId, params });
+  }
 
   try {
     switch (toolId) {
@@ -40,19 +44,18 @@ export async function dispatchTool(toolId: string, params: any): Promise<any> {
       case "system.notify":
         // TODO: Implement notification tool
         return { success: true, message: "Notification sent (mock)" };
+      case "system.open_app":
+        return await launcherTools.openApp(params.app);
+      case "system.open_path":
+        return await launcherTools.openFileOrPath(params.path);
 
       // ── Browser ──
       case "browser.navigate":
         try {
           return await browserTools.navigateToUrl(params.url);
         } catch (err) {
-          log.warn(`Playwright failed for ${params.url}, falling back to OS shell`, { error: String(err) });
-          const platform = process.platform;
-          let cmd = "";
-          if (platform === "win32") cmd = `start ${params.url}`;
-          else if (platform === "darwin") cmd = `open ${params.url}`;
-          else cmd = `xdg-open ${params.url}`;
-          return await shellTools.executeCommand(cmd);
+          log.warn(`Playwright failed for ${params.url}, falling back to safe launcher`, { error: String(err) });
+          return await launcherTools.openUrl(params.url);
         }
       case "browser.extract_text":
         return await browserTools.extractText(params.url);

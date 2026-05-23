@@ -10,17 +10,84 @@ import { TOOL_REGISTRY, requiresConfirmation } from "@config/tools.js";
 import { env } from "@config/index.js";
 import { addMessage } from "@memory/shortTerm.js";
 import { createLogger } from "@utils/logger.js";
+import { formatErrorForUser } from "@utils/errorHandler.js";
+import { openApp, openUrl } from "@tools/laptop/launcher.js";
 
 const log = createLogger("graph/laptopAgent");
 
+function normalizeDirectOpenTarget(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/\b(please|kindly|can you|could you)\b/g, "")
+    .replace(/\b(open|launch|start)\b/g, "")
+    .trim();
+}
+
+async function tryDirectLaunch(input: string): Promise<string | null> {
+  const target = normalizeDirectOpenTarget(input);
+  if (!target) return null;
+
+  if (target === "browser" || target === "web browser") {
+    console.log("[LAUNCH TRACE]", "src/graph/laptopAgent.ts", "tryDirectLaunch", "https://www.google.com");
+    await openUrl("https://www.google.com");
+    return "Task completed";
+  }
+
+  if (target === "youtube" || target === "you tube") {
+    console.log("[LAUNCH TRACE]", "src/graph/laptopAgent.ts", "tryDirectLaunch", "https://www.youtube.com");
+    await openUrl("https://www.youtube.com");
+    return "Task completed";
+  }
+
+  const appTargets = new Set([
+    "chrome",
+    "google chrome",
+    "edge",
+    "microsoft edge",
+    "firefox",
+    "notepad",
+    "calculator",
+    "calc",
+    "paint",
+    "mspaint",
+    "vscode",
+    "vs code",
+    "visual studio code",
+    "explorer",
+    "file explorer",
+  ]);
+
+  if (appTargets.has(target)) {
+    console.log("[LAUNCH TRACE]", "src/graph/laptopAgent.ts", "tryDirectLaunch", target);
+    await openApp(target);
+    return "Task completed";
+  }
+
+  return null;
+}
+
 export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
   log.info(`LaptopAgent: intent=${state.intent}`);
+  log.info("Received command", { command: state.currentInput });
+
+  try {
+    const directLaunchResponse = await tryDirectLaunch(state.currentInput);
+    if (directLaunchResponse) {
+      addMessage("assistant", directLaunchResponse, state.channel);
+      return { ...state, response: directLaunchResponse, currentStep: "done" };
+    }
+  } catch (err) {
+    log.error("Direct launch failed", err, { command: state.currentInput });
+    const userMessage = formatErrorForUser(err);
+    addMessage("assistant", userMessage, state.channel);
+    return { ...state, response: userMessage, currentStep: "error" };
+  }
 
   // Get relevant tools for this intent
   const toolNames = TOOL_REGISTRY
     .filter(t => {
-      if (state.intent === "system_control") return t.category === "system" || t.category === "shell" || t.category === "browser";
-      if (state.intent === "browser_action") return t.category === "browser" || t.category === "shell";
+      if (state.intent === "system_control") return t.category === "system" || t.category === "browser";
+      if (state.intent === "browser_action") return t.category === "browser" || t.category === "system";
       if (state.intent === "file_operation") return t.category === "filesystem";
       return true;
     })
@@ -80,9 +147,11 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
     
     if (parsed.tools?.length > 0) {
       for (const toolCall of parsed.tools) {
-        log.info("Executing tool:", toolCall.id);
+        log.info("Executing tool", { id: toolCall.id, params: toolCall.params });
         const toolDef = TOOL_REGISTRY.find(t => t.id === toolCall.id);
-        if (!toolDef) continue;
+        if (!toolDef) {
+          throw new Error(`No tool definition found for ${toolCall.id}`);
+        }
 
         // Safety Check
         const needsConfirm = requiresConfirmation(toolDef, env.SAFETY_MODE as "strict" | "moderate" | "permissive");
@@ -108,11 +177,21 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
 
       // If we executed tools, generate a new response based on results
       if (executionResults.length > 0) {
+        const allLaunchesCompleted = executionResults.every((entry) => {
+          const result = entry.result;
+          return result && result.success === true && result.message === "Task completed";
+        });
+
+        if (allLaunchesCompleted) {
+          addMessage("assistant", "Task completed", state.channel);
+          return { ...state, response: "Task completed", currentStep: "done" };
+        }
+
         const friendlyMessages: ChatMessage[] = [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: state.currentInput },
           { role: "assistant", content: `I executed these tools: ${JSON.stringify(executionResults)}` },
-          { role: "user", content: "Now give a short friendly response in the same language the user used, confirming what was done." }
+          { role: "user", content: "Now give a short friendly response in the same language the user used. Confirm success only for tools whose result shows success=true. Do not say Task completed unless the result message is exactly Task completed." }
         ];
 
         const friendlyResponse = await chat({
@@ -126,8 +205,10 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
       }
     }
   } catch (err) {
-    // Response wasn't JSON or tool execution failed
-    if (err instanceof Error && err.name === "SafetyError") throw err;
+    log.error("Tool selection or execution failed", err, { command: state.currentInput });
+    const userMessage = formatErrorForUser(err);
+    addMessage("assistant", userMessage, state.channel);
+    return { ...state, response: userMessage, currentStep: "error" };
   }
 
   addMessage("user", state.currentInput, state.channel, { intent: state.intent });

@@ -16,12 +16,18 @@ let porcupine: Porcupine | null = null;
 let recorder: PvRecorder | null = null;
 let isInterrupted = false;
 let isListening = false;
+let isRunning = false;
 
 /**
  * Start listening for the wake word in background.
  * Phase 1: Basic Detection & "Listening..." feedback.
  */
 export async function startWakeWordDetection(onWake: () => void) {
+  if (isRunning) {
+    log.info("Wake word detection is already running.");
+    return;
+  }
+
   if (!env.VOICE_ENABLED) {
     log.info("Voice Wake Word is disabled in .env");
     return;
@@ -34,6 +40,7 @@ export async function startWakeWordDetection(onWake: () => void) {
   }
 
   try {
+    isRunning = true;
     // 1. Initialize Porcupine
     let keywords: string[] = [];
 
@@ -139,6 +146,8 @@ export async function startWakeWordDetection(onWake: () => void) {
  */
 export function stopWakeWordDetection() {
   isInterrupted = true;
+  isRunning = false;
+  isListening = false;
   if (recorder) {
     recorder.stop();
     recorder.release();

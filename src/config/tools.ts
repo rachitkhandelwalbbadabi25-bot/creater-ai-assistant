@@ -196,6 +196,26 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
       sound: { type: "boolean", description: "Play notification sound", required: false, default: false },
     },
   },
+  {
+    id: "system.open_app",
+    name: "Open Application",
+    description: "Open a known Windows application by name using the safe launcher.",
+    category: "system",
+    permission: "safe",
+    parameters: {
+      app: { type: "string", description: "Application name, for example notepad, calculator, chrome, edge, vscode", required: true },
+    },
+  },
+  {
+    id: "system.open_path",
+    name: "Open File or Folder",
+    description: "Open an existing file or folder path using the safe launcher.",
+    category: "system",
+    permission: "safe",
+    parameters: {
+      path: { type: "string", description: "Existing absolute or relative file/folder path", required: true },
+    },
+  },
 
   // ── Editor / Git Tools ───────────────────────────────────────────────────────
   {

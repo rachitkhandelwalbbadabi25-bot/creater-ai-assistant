@@ -133,7 +133,9 @@ ${availableTools.map((t) => `- ${t}`).join("\n")}
 
 Based on the user's request, decide which tool(s) to use.
 CRITICAL INSTRUCTION: You must actually output the tool call to perform the action. Do not just say you will do it.
-- If the user says "open youtube", use computer.open_browser with URL "https://www.youtube.com" (or shell.execute with "start https://www.youtube.com" on Windows).
+- If the user says "open youtube", use computer.open_browser with URL "https://www.youtube.com".
+- If the user says "open notepad/calculator/chrome/vscode", use system.open_app with app set to the requested app name. Never use shell.execute with Windows "start" for opening apps or files.
+- If the user says "open file/folder/path", use system.open_path with path set to the requested path.
 - When user says 'play [song name] on youtube' (or 'play [song name]'), use computer.play_youtube with query="[song name]".
 
 Examples:
@@ -144,6 +146,8 @@ Examples:
 - "scroll down" → computer.scroll with direction="down", amount=500
 - "take a screenshot" → computer.screenshot
 - "open google" → computer.open_browser with url="https://www.google.com"
+- "open notepad" → system.open_app with app="notepad"
+- "open C:\\Users\\me\\Desktop\\notes.txt" → system.open_path with path="C:\\Users\\me\\Desktop\\notes.txt"
 
 Respond with JSON ONLY: {"tools": [{"id": "<tool_id>", "params": {}}], "reasoning": "<why>"}
 If no tool is needed, respond: {"tools": [], "reasoning": "No tool needed — answering directly."}`;

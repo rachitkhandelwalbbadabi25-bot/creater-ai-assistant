@@ -2,7 +2,7 @@
 // src/tui/app.tsx — Terminal UI using Ink (React for the terminal)
 // ════════════════════════════════════════════════════════════════════════════════
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { render, Box, Text, useInput, useApp, Newline } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
@@ -73,6 +73,7 @@ function CreaterApp() {
     },
   ]);
   const [isThinking, setIsThinking] = useState(false);
+  const isSubmittingRef = useRef(false);
   const [isListening, setIsListening] = useState(false);
   const [isProcessingSpeech, setIsProcessingSpeech] = useState(false);
   const [listeningTimeLeft, setListeningTimeLeft] = useState(15);
@@ -108,6 +109,7 @@ function CreaterApp() {
   const handleSubmit = useCallback(async (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
+    if (isSubmittingRef.current) return;
 
     if (["exit", "quit", "bye"].includes(trimmed.toLowerCase())) {
       setMessages(prev => [...prev, {
@@ -255,6 +257,7 @@ function CreaterApp() {
 
     setMessages((prev) => [...prev, { role: "user", content: trimmed, timestamp: new Date() }]);
     setInput("");
+    isSubmittingRef.current = true;
     setIsThinking(true);
 
     try {
@@ -275,6 +278,7 @@ function CreaterApp() {
         timestamp: new Date(),
       }]);
     } finally {
+      isSubmittingRef.current = false;
       setIsThinking(false);
       setStats(getAppStats());
     }

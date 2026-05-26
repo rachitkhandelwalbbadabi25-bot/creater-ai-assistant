@@ -20,7 +20,7 @@ import { IntentDetector } from "../intent/IntentDetector";
 import { ConversationStateEngine } from "../state/ConversationStateEngine";
 import { ResponseStrategySelector } from "../strategy/ResponseStrategySelector";
 import { PersonalityRenderer } from "../personality/PersonalityRenderer";
-import { ConversationState } from "../types";
+import { ContextPrioritizationEngine } from "../memory/ContextPrioritizationEngine";
 
 export class ConversationEngine {
   private readonly inputLayer: InputUnderstandingLayer;
@@ -43,6 +43,44 @@ export class ConversationEngine {
    * The method is async to stay compatible with future async components.
    */
   async processTurn(message: UserMessage): Promise<RenderedResponse> {
+    // Normalise the incoming text.
+    const normalized = this.inputLayer.process(message.text);
+
+    // Retrieve or initialise conversation state for this user.
+    let state = this.stateEngine.getState(message.id);
+    if (!state) {
+      state = this.stateEngine.initState(message.id, { ...message, text: normalized });
+    } else {
+      // Update the lastMessage with the newly normalised text.
+      state.lastMessage = { ...message, text: normalized };
+    }
+
+    // Detect intent.
+    const intent: Intent = this.intentDetector.detect(normalized);
+
+    // Store intent in state (creates a new turn id).
+    const updatedState: ConversationState = this.stateEngine.updateIntent(state, intent);
+
+    // ----- Context prioritization -----
+    // Generate a list of prioritized context windows.
+    const prioritized = ContextPrioritizationEngine.prioritize(updatedState);
+    // Convert to ActiveContext shape (id + relevance score).
+    const activeContexts = prioritized.map((w) => ({ id: w.id, relevance: w.relevanceScore ?? 0 }));
+    // Merge into state for downstream components.
+    const stateWithContext = { ...updatedState, activeContexts };
+
+    // Choose a response strategy based on intent and optional personality.
+    const strategy: ResponseStrategy = this.selector.select(intent, stateWithContext.personality);
+
+    // In Phase‑1 the payload is a plain string.
+    const raw = typeof strategy.payload === "string" ? strategy.payload : "";
+
+    // Apply personality tone / style.
+    const finalText = this.renderer.render(raw, stateWithContext.personality);
+
+    // Return the final response object.
+    return { text: finalText };
+  }
     // Normalise the incoming text.
     const normalized = this.inputLayer.process(message.text);
 

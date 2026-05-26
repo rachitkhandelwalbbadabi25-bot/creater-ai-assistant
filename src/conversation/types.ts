@@ -109,19 +109,23 @@ export interface ConversationState {
   threadState?: ThreadState;
   shortTermMemory?: ShortTermMemory;
   recentIntents?: Intent[];
-  recentEntities?: string[];
-  personality?: PersonalityProfile;
+  // *** Response strategy & rendering extensions ***
 
   // new field for active prioritized contexts
   activeContexts?: ActiveContext[];
+
+  // new cognitive fields
+  reasoningBudget?: ReasoningBudget;
+  continuityCheckpoint?: ContinuityCheckpoint;
+  cognitiveTrace?: CognitiveTrace;
+  runtimeEvents?: RuntimeEvent[];
+  attentionState?: AttentionState;
 
   // allow future extensions
   [key: string]: unknown;
 }
 
-/*** Response strategy & rendering extensions ***/
 export type ResponseDepth = ReasoningDepth;
-
 export type ResponseStyle =
   | "concise"
   | "analytical"
@@ -156,3 +160,87 @@ export interface RenderedResponse {
   text: string;
   meta?: Record<string, unknown>;
 }
+
+// ---- NEW COGNITIVE TYPES ----
+/** Reasoning budget limits deterministic processing */
+export interface ReasoningBudget {
+  maxContextWindows: number; // how many prioritized contexts to consider
+  maxResponseLength: number; // character limit for the final response
+}
+
+/** Checkpoint used for continuity recovery */
+export interface ContinuityCheckpoint {
+  topic: string;
+  entities: string[];
+  goals: string[];
+  lastIntent: string;
+}
+
+/** Trace of cognitive steps for observability */
+export interface CognitiveTrace {
+  steps: string[]; // human‑readable step identifiers
+}
+
+/** Generic runtime event for lightweight logging */
+export interface RuntimeEvent {
+  timestamp: number;
+  type: string;
+  details: Record<string, unknown>;
+}
+
+/** Tracks active attention context and decay */
+export interface AttentionState {
+  activeContextIds: string[];
+  decayRate: number; // per‑turn decay factor (0‑1)
+}
+
+/** Result of a continuity recovery attempt */
+export interface RecoveryResult {
+  success: boolean;
+  restoredState?: Partial<ConversationState>;
+}
+
+/** Result of a validation operation */
+export interface RuntimeValidationResult {
+  ok: boolean;
+  errors: string[];
+}
+
+/** Result of a retrieval validation */
+export interface RetrievalValidationResult {
+  ok: boolean;
+  errors: string[];
+}
+
+/** Counters for lightweight runtime metrics */
+export interface MetricsCounters {
+  reasoningDepthCalls: number;
+  contextRetrievalCalls: number;
+  continuityRecoveries: number;
+  responseGenerations: number;
+  invalidStateRecoveries: number;
+  fallbackInvocations: number;
+  contextPruned: number;
+  replaySnapshotsCreated: number;
+  transitionCounts: Record<string, number>;
+}
+
+/** Snapshot of current metrics */
+export interface MetricsSnapshot extends MetricsCounters {}
+
+/** Generic cognitive event for observability */
+export interface CognitiveEvent {
+  timestamp: number; // deterministic monotonic counter
+  type: string;
+  details: Record<string, unknown>;
+}
+
+/** Record of a state transition */
+export interface StateTransitionRecord {
+  transition: string;
+  from: string; // could be a serialized state identifier
+  to: string;
+  reason: string;
+}
+
+

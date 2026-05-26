@@ -38,6 +38,7 @@ const EnvSchema = z.object({
   DEEPSEEK_API_KEY: z.string().default(""),
   DEFAULT_CLOUD_MODEL: z.string().default("claude-3-5-sonnet-20241022"),
   DEFAULT_MODEL: z.string().optional(), // If set, overrides PRIMARY/FAST logic
+  USE_LLM_ROUTER: envBoolean.default(false),
   LLM_PROVIDER: z.enum([
     "local",
     "cloud",

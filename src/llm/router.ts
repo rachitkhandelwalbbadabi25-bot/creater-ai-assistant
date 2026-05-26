@@ -59,21 +59,31 @@ const INTENT_TO_AGENT: Record<string, string> = {
 };
 
 // ─── Quick Keyword Route ─────────────────────────────────────────────────────────
+// ─── Quick Keyword Route ─────────────────────────────────────────────────────────
 function quickKeywordRoute(message: string): IntentResult | null {
   const msg = message.toLowerCase();
-  
-  if (msg.match(/task|todo|remind|deadline|schedule/))
+  // Greetings / chitchat
+  if (msg.match(/\b(hi|hello|hey|how are you|good morning|good evening)\b/))
+    return { intent: "greeting", confidence: 0.95, entities: {} };
+  // Emotional support / empathy
+  if (msg.match(/\b(sad|happy|angry|upset|stress|anxious)\b/))
+    return { intent: "emotion_support", confidence: 0.9, entities: {} };
+  // Technical discussion / code related
+  if (msg.match(/\b(code|bug|error|function|class|import|typescript|javascript)\b/))
+    return { intent: "technical_discussion", confidence: 0.9, entities: {} };
+  // Planning / scheduling
+  if (msg.match(/\b(plan|schedule|timeline|deadline|milestone)\b/))
+    return { intent: "planning", confidence: 0.9, entities: {} };
+  // Brainstorming
+  if (msg.match(/\b(idea|brainstorm|concept|prototype)\b/))
+    return { intent: "brainstorming", confidence: 0.9, entities: {} };
+  // Continuation / follow‑up
+  if (msg.match(/\b(continue|go on|next|more|add)\b/))
+    return { intent: "continuation", confidence: 0.85, entities: {} };
+  // Task / reminder shortcuts
+  if (msg.match(/\b(task|todo|remind|deadline|schedule)\b/))
     return { intent: "task_management", confidence: 0.9, entities: {} };
-  
-  if (msg.match(/code|fix|bug|error|function|class|import/))
-    return { intent: "code_request", confidence: 0.9, entities: {} };
-  
-  if (msg.match(/open|close|run|execute|file|folder|browser/))
-    return { intent: "system_control", confidence: 0.9, entities: {} };
-  
-  if (msg.match(/hello|hi|hey|how are you|kya|bhai|hii|helo/))
-    return { intent: "chitchat", confidence: 0.95, entities: {} };
-
+  // Fallback none
   return null;
 }
 
@@ -85,51 +95,63 @@ function quickKeywordRoute(message: string): IntentResult | null {
 export async function classifyIntent(
   userMessage: string
 ): Promise<Result<IntentResult>> {
-  return safeAsync(async () => {
-    // Fast keyword routing — no LLM call needed
-    const quickRoute = quickKeywordRoute(userMessage);
-    if (quickRoute) {
-      log.info(`Quick route: ${quickRoute.intent} (keyword match)`);
-      return quickRoute;
-    }
+  const start = Date.now();
+  // First try deterministic detection
+  const deterministic = quickKeywordRoute(userMessage);
+  if (deterministic) {
+    const duration = Date.now() - start;
+    log.info(`Deterministic intent detection: ${deterministic.intent} (${duration}ms)`, {
+      method: "deterministic",
+    });
+    return { ok: true, value: deterministic } as any;
+  }
 
-    const messages: ChatMessage[] = [
-      { role: "system", content: INTENT_CLASSIFICATION_PROMPT },
-      { role: "user", content: userMessage },
-    ];
-
+  // Optional LLM fallback – controlled by env flag
+  if (env.USE_LLM_ROUTER) {
     try {
+      const messages: ChatMessage[] = [
+        { role: "system", content: INTENT_CLASSIFICATION_PROMPT },
+        { role: "user", content: userMessage },
+      ];
+
+      const llmStart = Date.now();
       const response = await chat({
         model: Models.FAST,
         messages,
-        options: { 
+        options: {
           ...GenerationPresets.classification,
           num_predict: 100,
         },
-        // format: "json" removed — causes hang on small Ollama models
       });
+      const inferenceDuration = Date.now() - llmStart;
 
-      // Safe JSON parse with regex fallback
       const jsonMatch = response.match(/\{.*\}/s);
       if (!jsonMatch) throw new Error("No JSON in response");
       const parsed = JSON.parse(jsonMatch[0]) as IntentResult;
-
-      log.info(`Intent: ${parsed.intent} (${(parsed.confidence * 100).toFixed(0)}%)`, {
-        message: userMessage.slice(0, 80),
+      const totalDuration = Date.now() - start;
+      log.info(`LLM intent classification: ${parsed.intent} (${inferenceDuration}ms)`, {
+        method: "llm",
+        totalDuration,
       });
-      return parsed;
+      return { ok: true, value: parsed } as any;
     } catch (e) {
-      // Fallback — don't crash, return default
-      log.warn(`Intent classification failed: ${e instanceof Error ? e.message : String(e)}. Falling back to chitchat.`);
-      return { intent: "chitchat", confidence: 0.5, entities: {} };
+      const duration = Date.now() - start;
+      log.warn(`Intent classification LLM failed: ${e instanceof Error ? e.message : String(e)}. Falling back to chitchat. (${duration}ms)`);
+      return { ok: true, value: { intent: "chitchat", confidence: 0.5, entities: {} } } as any;
     }
-  });
-}
+  }
 
+  // No deterministic match and LLM fallback disabled – default to chitchat
+  const duration = Date.now() - start;
+  log.info(`No intent match and LLM fallback disabled. Defaulting to chitchat (${duration}ms)`, {
+    method: "fallback",
+  });
+  return { ok: true, value: { intent: "chitchat", confidence: 0.5, entities: {} } } as any;
+}
 // ─── Route Request ────────────────────────────────────────────────────────────────
 /**
  * Full routing pipeline:
- * 1. Classify the user's intent (fast model)
+ * 1. Classify the user's intent (deterministic first, optional LLM fallback)
  * 2. Select the appropriate model + generation preset
  * 3. Determine which agent should handle the request
  */
@@ -137,14 +159,13 @@ export async function routeRequest(
   userMessage: string
 ): Promise<Result<RouteDecision>> {
   return safeAsync(async () => {
+    const start = Date.now();
     // Step 1: Classify intent
     const intentResult = await classifyIntent(userMessage);
     if (!intentResult.ok) throw intentResult.error;
-
     const intent = intentResult.value;
 
     // Step 2: Select model and preset
-    // Preference: Persisted Override / DEFAULT_MODEL > Auto-routing
     const model = env.DEFAULT_MODEL ?? getModelForTask(intent.intent);
     const preset = getPresetKeyForIntent(intent.intent);
 
@@ -152,12 +173,12 @@ export async function routeRequest(
     const agent = INTENT_TO_AGENT[intent.intent] ?? "taskAgent";
 
     const decision: RouteDecision = { intent, model, preset, agent };
-
+    const totalTime = Date.now() - start;
     log.info(`Routed → agent: ${agent}, model: ${model}, preset: ${preset}`, {
       intent: intent.intent,
       confidence: intent.confidence,
+      routingTimeMs: totalTime,
     });
-
     return decision;
   });
 }

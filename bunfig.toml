@@ -28,11 +28,11 @@ include = ["tests/**/*.test.ts", "src/**/*.test.ts"]
 # Timeout per test (ms)
 timeout = 15000
 
-[test.coverage]
-include = ["src/**"]
-exclude = ["src/tui/**", "src/web/**"]
-reporter = ["text", "lcov"]
-dir = "./coverage"
+# [test.coverage]
+# include = ["src/**"]
+# exclude = ["src/tui/**", "src/web/**"]
+# reporter = ["text", "lcov"]
+# dir = "./coverage"
 
 [env]
 # Load .env file automatically in all bun commands

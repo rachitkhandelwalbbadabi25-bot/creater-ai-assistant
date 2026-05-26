@@ -26,7 +26,8 @@
       "@skills/*": ["src/skills/*"],
       "@tui/*": ["src/tui/*"],
       "@bot/*": ["src/bot/*"],
-      "@utils/*": ["src/utils/*"]
+      "@utils/*": ["src/utils/*"],
+      "@conversation/*": ["src/conversation/*"]
     },
     "types": ["bun-types"]
   },

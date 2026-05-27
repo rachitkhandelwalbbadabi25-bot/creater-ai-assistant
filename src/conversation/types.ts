@@ -111,6 +111,8 @@ export interface ConversationState {
   recentIntents?: Intent[];
   // *** Response strategy & rendering extensions ***
 
+  // user personality profile for rendering
+  personality?: PersonalityProfile;
   // new field for active prioritized contexts
   activeContexts?: ActiveContext[];
 

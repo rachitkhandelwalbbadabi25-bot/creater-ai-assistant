@@ -1,6 +1,6 @@
 "use server";
 
-import { processMessage } from "@graph/supervisor.js";
+import { processMessageStreaming } from "@graph/supervisor.js";
 import { getAppStats } from "@utils/stats.js";
 import { getSystemInfo } from "@tools/laptop/system.js";
 import { db } from "@memory/db.js";
@@ -9,10 +9,11 @@ import { env } from "@config/index.js";
 /**
  * Sends a message to the AI supervisor and returns the final response.
  */
-export async function chatAction(message: string) {
+export async function chatAction(message: string, onPartial?: (text: string) => void) {
   try {
-    const response = await processMessage(message, "web");
-    return { success: true, response };
+    // Use streaming version if a callback is provided, otherwise also stream without callback
+    const final = await processMessageStreaming(message, "web", onPartial);
+    return { success: true, response: final };
   } catch (error: any) {
     console.error("Chat Action Error:", error);
     let errorMessage = error.message;

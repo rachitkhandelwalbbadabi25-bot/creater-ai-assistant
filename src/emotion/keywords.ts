@@ -120,16 +120,41 @@ export function matchKeywords(text: string): KeywordMatch | null {
   const lower = text.toLowerCase();
   let bestMatch: KeywordMatch | null = null;
   let bestWeight = 0;
+  let matchedPhrase = "";
 
   // Sort by phrase length (longer phrases first for specificity)
   const phrases = Object.keys(EMOTION_KEYWORDS).sort((a, b) => b.length - a.length);
 
   for (const phrase of phrases) {
-    if (lower.includes(phrase)) {
+    const idx = lower.indexOf(phrase);
+    if (idx !== -1) {
       const match = EMOTION_KEYWORDS[phrase]!;
       if (match.weight > bestWeight) {
         bestMatch = match;
         bestWeight = match.weight;
+        matchedPhrase = phrase;
+      }
+    }
+  }
+
+  // Simple negation detection – if a negation word appears shortly before the matched keyword,
+  // we invert the sentiment and assign a high weight to override potential ML errors.
+  if (bestMatch) {
+    const phraseIdx = lower.indexOf(matchedPhrase);
+    const textBefore = lower.substring(0, phraseIdx).trim();
+    const negations = ["not", "never", "no", "don't", "didn't", "won't", "can't", "isn't", "aren't", "ain't"];
+    
+    const wordsBefore = textBefore.split(/\s+/);
+    const lastWordBefore = wordsBefore[wordsBefore.length - 1];
+
+    if (negations.includes(lastWordBefore) || textBefore.endsWith("n't")) {
+      // Invert positive moods to negative
+      if (["happy", "excited", "motivated", "grateful"].includes(bestMatch.mood)) {
+        bestMatch = { ...bestMatch, mood: "sad", weight: 0.9 };
+      } 
+      // Invert negative moods to neutral/positive
+      else if (["sad", "angry", "anxious", "frustrated", "stressed", "tired"].includes(bestMatch.mood)) {
+        bestMatch = { ...bestMatch, mood: "neutral", energy: "medium", weight: 0.9 };
       }
     }
   }

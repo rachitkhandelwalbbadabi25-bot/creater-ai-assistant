@@ -3,18 +3,19 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 import * as fsTools from "./laptop/fileSystem.js";
-import * as shellTools from "./laptop/executor.js";
-import * as systemTools from "./laptop/system.js";
-import * as browserTools from "./laptop/browser.js";
+import * as browserTools from "@tools/laptop/browser.js";
 import * as editorTools from "./laptop/editor.js";
 import * as computerTools from "./laptop/computer.js";
 import * as launcherTools from "./laptop/launcher.js";
 import { ToolError } from "@utils/errorHandler.js";
 import { createLogger } from "@utils/logger.js";
+import { createToolFailure, normalizeToolResult, type ToolResult } from "@tools/toolResult.js";
 
 const log = createLogger("tools/dispatcher");
+console.log("[MODULE LOAD]", import.meta.url);
 
-export async function dispatchTool(toolId: string, params: any): Promise<any> {
+export async function dispatchTool(toolId: string, params: any): Promise<ToolResult> {
+  const startedAt = Date.now();
   log.info(`Dispatching tool: ${toolId}`, params);
   if (toolId.startsWith("system.open") || toolId.startsWith("computer.") || toolId === "browser.navigate") {
     console.log("[LAUNCH TRACE]", "src/tools/dispatcher.ts", "dispatchTool", { toolId, params });
@@ -24,26 +25,28 @@ export async function dispatchTool(toolId: string, params: any): Promise<any> {
     switch (toolId) {
       // ── File System ──
       case "fs.read_file":
-        return await fsTools.readFileContent(params.path, params.encoding);
+        return normalizeToolResult(toolId, startedAt, await fsTools.readFileContent(params.path, params.encoding), "File read.");
       case "fs.write_file":
-        return await fsTools.writeFileContent(params.path, params.content, params.append);
+        return normalizeToolResult(toolId, startedAt, await fsTools.writeFileContent(params.path, params.content, params.append), "File written.");
       case "fs.delete_file":
-        return await fsTools.deleteFile(params.path);
+        return normalizeToolResult(toolId, startedAt, await fsTools.deleteFile(params.path), "File deleted.");
       case "fs.list_directory":
-        return await fsTools.listDirectory(params.path, params.pattern);
+        return normalizeToolResult(toolId, startedAt, await fsTools.listDirectory(params.path, params.pattern), "Directory listed.");
 
       // ── Shell ──
       case "shell.execute":
-        return await shellTools.executeCommand(params.command, params.cwd, params.timeout_ms);
+        console.log("[SHELL EXECUTION BLOCKED]", "src/tools/dispatcher.ts", "shell.execute", params?.command);
+        return createToolFailure(toolId, startedAt, "Shell execution is disabled during stabilization.", "Shell execution disabled during stabilization");
       case "shell.execute_dangerous":
-        return await shellTools.executeCommand(params.command);
+        console.log("[SHELL EXECUTION BLOCKED]", "src/tools/dispatcher.ts", "shell.execute_dangerous", params?.command);
+        return createToolFailure(toolId, startedAt, "Shell execution is disabled during stabilization.", "Shell execution disabled during stabilization");
 
       // ── System ──
       case "system.info":
-        return await systemTools.getSystemInfo();
+        return normalizeToolResult(toolId, startedAt, await import("./laptop/system.js").then((m) => m.getSystemInfo()), "System info retrieved.");
       case "system.notify":
         // TODO: Implement notification tool
-        return { success: true, message: "Notification sent (mock)" };
+        return normalizeToolResult(toolId, startedAt, { success: true, message: "Notification sent (mock)" }, "Notification sent.");
       case "system.open_app":
         return await launcherTools.openApp(params.app);
       case "system.open_path":
@@ -51,12 +54,9 @@ export async function dispatchTool(toolId: string, params: any): Promise<any> {
 
       // ── Browser ──
       case "browser.navigate":
-        try {
-          return await browserTools.navigateToUrl(params.url);
-        } catch (err) {
-          log.warn(`Playwright failed for ${params.url}, falling back to safe launcher`, { error: String(err) });
-          return await launcherTools.openUrl(params.url);
-        }
+        console.log("[PLAYWRIGHT PATH]", "src/tools/dispatcher.ts", "browser.navigate", params?.url);
+        console.log("[BROWSER NAVIGATION]", params?.url);
+        return await browserTools.navigateToUrl(params.url);
       case "browser.extract_text":
         return await browserTools.extractText(params.url);
       case "browser.screenshot":
@@ -64,45 +64,46 @@ export async function dispatchTool(toolId: string, params: any): Promise<any> {
 
       // ── Editor / Git ──
       case "editor.open_file":
-        return await editorTools.openInVSCode(params.path, params.line);
+        return normalizeToolResult(toolId, startedAt, await editorTools.openInVSCode(params.path, params.line), "Editor opened.");
       case "git.status":
-        return await editorTools.gitStatus(params.repo_path);
+        return normalizeToolResult(toolId, startedAt, await editorTools.gitStatus(params.repo_path), "Git status retrieved.");
       case "git.commit":
-        return await editorTools.gitCommit(params.repo_path, params.message);
+        return normalizeToolResult(toolId, startedAt, await editorTools.gitCommit(params.repo_path, params.message), "Git commit created.");
 
       // ── Computer Control ──
-      case "computer.open_browser":
-        return await computerTools.openBrowser(params.url);
       case "computer.navigate":
-        return await computerTools.navigateTo(params.url);
+        return normalizeToolResult(toolId, startedAt, await computerTools.navigateTo(params.url), "Navigation completed.");
       case "computer.click":
-        return await computerTools.clickAt(params.x, params.y);
+        return normalizeToolResult(toolId, startedAt, await computerTools.clickAt(params.x, params.y), "Click completed.");
       case "computer.click_selector":
-        return await computerTools.clickSelector(params.selector);
+        return normalizeToolResult(toolId, startedAt, await computerTools.clickSelector(params.selector), "Click completed.");
       case "computer.type":
-        return await computerTools.typeText(params.text, params.selector);
+        return normalizeToolResult(toolId, startedAt, await computerTools.typeText(params.text, params.selector), "Typing completed.");
       case "computer.press_key":
-        return await computerTools.pressKey(params.key);
+        return normalizeToolResult(toolId, startedAt, await computerTools.pressKey(params.key), "Key press completed.");
       case "computer.shortcut":
-        return await computerTools.keyboardShortcut(params.shortcut);
+        return normalizeToolResult(toolId, startedAt, await computerTools.keyboardShortcut(params.shortcut), "Shortcut completed.");
       case "computer.scroll":
-        return await computerTools.scrollPage(params.direction, params.amount);
+        return normalizeToolResult(toolId, startedAt, await computerTools.scrollPage(params.direction, params.amount), "Scroll completed.");
       case "computer.screenshot":
-        return await computerTools.takeScreenshotOfPage();
+        return normalizeToolResult(toolId, startedAt, await computerTools.takeScreenshotOfPage(), "Screenshot completed.");
       case "computer.get_text":
-        return await computerTools.getPageText();
+        return normalizeToolResult(toolId, startedAt, await computerTools.getPageText(), "Page text retrieved.");
       case "computer.fill_form":
-        return await computerTools.fillForm(params.selector, params.value);
-      case "computer.play_youtube":
-        return await computerTools.playYouTube(params.query);
+        return normalizeToolResult(toolId, startedAt, await computerTools.fillForm(params.selector, params.value), "Form filled.");
       case "computer.close_browser":
-        return await computerTools.closeBrowserWindow();
+        return normalizeToolResult(toolId, startedAt, await computerTools.closeBrowserWindow(), "Browser closed.");
 
       default:
         throw new ToolError(toolId, `No implementation found for tool: ${toolId}`);
     }
   } catch (error) {
     log.error(`Tool execution failed: ${toolId}`, error);
-    throw error;
+    return createToolFailure(
+      toolId,
+      startedAt,
+      `I tried to run ${toolId}, but it failed.`,
+      error instanceof Error ? error.message : String(error)
+    );
   }
 }

@@ -46,9 +46,14 @@ export default function Analytics() {
 
   useEffect(() => {
     const fetchData = async () => {
-      const res = await getAnalyticsAction();
-      if (res.success) setData(res.data);
-      setIsLoading(false);
+      try {
+        const res = await getAnalyticsAction();
+        if (res.success) setData(res.data);
+      } catch (error) {
+        console.error("[FETCH END]", { action: "getAnalyticsAction", error });
+      } finally {
+        setIsLoading(false);
+      }
     };
     fetchData();
   }, []);

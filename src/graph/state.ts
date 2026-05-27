@@ -3,6 +3,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 import type { Mood, EnergyLevel } from "@emotion/keywords.js";
+import type { RuntimeMode } from "../runtime/RuntimeModeClassifier.js";
 
 /** A single message in the conversation */
 export interface ConversationMessage {
@@ -22,6 +23,7 @@ export interface GraphState {
   messages: ConversationMessage[];
   currentInput: string;
   channel: "tui" | "telegram" | "web" | "voice";
+  runtimeMode: RuntimeMode;
 
   // ── Routing ─────────────────────────────────────────────────────────────────
   intent: string;
@@ -60,6 +62,7 @@ export function createInitialState(
     messages: [{ role: "user", content: input, timestamp: Date.now() }],
     currentInput: input,
     channel,
+    runtimeMode: "conversational",
     intent: "unknown",
     intentConfidence: 0,
     targetAgent: "",

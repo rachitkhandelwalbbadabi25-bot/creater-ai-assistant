@@ -23,7 +23,7 @@ Output format MUST be JSON:
 Available tool categories: filesystem, shell, browser, system, editor.
 Example steps:
 - fs.list_directory({ path: "./src" })
-- shell.execute({ command: "npm test" })
+- system.open_path({ path: "./reports" })
 - system.info()
 `;
 

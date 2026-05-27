@@ -28,6 +28,10 @@ export default function ChatInterface({
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    console.log("[CHAT MOUNT]", { appName });
+  }, [appName]);
+
+  useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
@@ -35,6 +39,7 @@ export default function ChatInterface({
 
   const handleSend = async () => {
     if (!input.trim() || isLoading || isSubmittingRef.current) return;
+    console.log("[FETCH START]", { message: input });
     isSubmittingRef.current = true;
 
     const userMsg: Message = {
@@ -51,6 +56,7 @@ export default function ChatInterface({
     let result;
     try {
       result = await chatAction(input);
+      console.log("[FETCH END]", { message: input, success: result?.success });
     } finally {
       isSubmittingRef.current = false;
       setIsLoading(false);
@@ -145,8 +151,14 @@ export default function ChatInterface({
             <input 
               type="text"
               value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSend()}
+              onChange={(e) => {
+                console.log("[CHAT INPUT CHANGE]", e.currentTarget.value);
+                setInput(e.target.value)
+              }}
+              onKeyDown={(e) => {
+                console.log("[CHAT INPUT KEY]", e.key);
+                e.key === "Enter" && handleSend()
+              }}
               placeholder="Ask me anything..."
               className="flex-1 bg-transparent border-none focus:ring-0 text-zinc-200 px-4 py-3 placeholder:text-zinc-600 font-medium"
             />

@@ -59,19 +59,29 @@ export default function MemoryExplorer() {
 
   const fetchFacts = async (search?: string) => {
     setIsLoading(true);
-    const res = await getMemoriesAction(search);
-    if (res.success) setMemories(res.data as Memory[]);
-    setIsLoading(false);
+    try {
+      const res = await getMemoriesAction(search);
+      if (res.success) setMemories(res.data as Memory[]);
+    } catch (error) {
+      console.error("[FETCH END]", { action: "getMemoriesAction", error, search });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const fetchGraph = async (search?: string) => {
     setIsLoading(true);
-    const res = await getGraphAction(search);
-    if (res.success) {
-      setNodes((res.data as any).nodes ?? []);
-      setStats((res.data as any).stats ?? { nodeCount: 0, edgeCount: 0, archivedCount: 0 });
+    try {
+      const res = await getGraphAction(search);
+      if (res.success) {
+        setNodes((res.data as any).nodes ?? []);
+        setStats((res.data as any).stats ?? { nodeCount: 0, edgeCount: 0, archivedCount: 0 });
+      }
+    } catch (error) {
+      console.error("[FETCH END]", { action: "getGraphAction", error, search });
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   useEffect(() => {

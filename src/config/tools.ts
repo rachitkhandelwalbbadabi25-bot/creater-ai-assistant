@@ -1,6 +1,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 // src/config/tools.ts — Tool registry, permission levels, and safety constraints
 // ════════════════════════════════════════════════════════════════════════════════
+console.log("[MODULE LOAD]", import.meta.url);
 
 // ─── Permission Levels ────────────────────────────────────────────────────────────
 /**
@@ -95,32 +96,6 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
     parameters: {
       path: { type: "string", description: "Directory path", required: true },
       pattern: { type: "string", description: "Glob pattern filter", required: false },
-    },
-  },
-
-  // ── Shell Tools ──────────────────────────────────────────────────────────────
-  {
-    id: "shell.execute",
-    name: "Execute Shell Command",
-    description: "Run a sandboxed shell command. Commands are validated before execution.",
-    category: "shell",
-    permission: "dangerous",
-    parameters: {
-      command: { type: "string", description: "Shell command to run", required: true },
-      cwd: { type: "string", description: "Working directory", required: false, default: "." },
-      timeout_ms: { type: "number", description: "Max execution time in ms", required: false, default: 30000 },
-    },
-    example: 'shell.execute({ command: "npm run build", cwd: "~/projects/app" })',
-  },
-  {
-    id: "shell.execute_dangerous",
-    name: "Execute Dangerous Shell Command",
-    description: "Run a potentially destructive shell command (rm, sudo, etc.). Always requires confirmation.",
-    category: "shell",
-    permission: "dangerous",
-    parameters: {
-      command: { type: "string", description: "Shell command to run", required: true },
-      reason: { type: "string", description: "Why this command is needed", required: true },
     },
   },
 
@@ -253,16 +228,6 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
 
   // ── Computer Control Tools ───────────────────────────────────────────────────
   {
-    id: "computer.open_browser",
-    name: "Open Browser",
-    description: "Open a browser window to a URL",
-    category: "browser",
-    permission: "safe",
-    parameters: {
-      url: { type: "string", description: "Optional URL to open initially", required: false }
-    }
-  },
-  {
     id: "computer.navigate",
     name: "Navigate Browser",
     description: "Navigate browser to a URL",
@@ -360,16 +325,6 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
     parameters: {
       selector: { type: "string", description: "CSS selector of input field", required: true },
       value: { type: "string", description: "Text value to fill", required: true }
-    }
-  },
-  {
-    id: "computer.play_youtube",
-    name: "Play YouTube",
-    description: "Search and play a video on YouTube",
-    category: "browser",
-    permission: "safe",
-    parameters: {
-      query: { type: "string", description: "Video or song name to search and play", required: true }
     }
   },
   {

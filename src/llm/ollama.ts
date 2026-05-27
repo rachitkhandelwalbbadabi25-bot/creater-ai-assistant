@@ -12,11 +12,35 @@ import { withTimeout } from "@utils/helpers.js";
 
 const log = createLogger("llm/ollama");
 
-const client = new Ollama({ host: env.OLLAMA_BASE_URL });
-log.info("Ollama client initialized", {
-  host: env.OLLAMA_BASE_URL,
-  timeoutMs: env.OLLAMA_TIMEOUT_MS,
-});
+type OllamaRuntimeSingleton = {
+  client: Ollama;
+};
+
+const globalRuntime = globalThis as typeof globalThis & {
+  __createrOllamaRuntime?: OllamaRuntimeSingleton;
+};
+
+function createOllamaRuntime(): OllamaRuntimeSingleton {
+  const client = new Ollama({ host: env.OLLAMA_BASE_URL });
+  log.info("Ollama client initialized", {
+    host: env.OLLAMA_BASE_URL,
+    timeoutMs: env.OLLAMA_TIMEOUT_MS,
+  });
+  return { client };
+}
+
+const runtime = globalRuntime.__createrOllamaRuntime ?? createOllamaRuntime();
+
+if (globalRuntime.__createrOllamaRuntime) {
+  console.log("SINGLETON RUNTIME REUSED", {
+    runtime: "ollama",
+    host: env.OLLAMA_BASE_URL,
+  });
+} else {
+  globalRuntime.__createrOllamaRuntime = runtime;
+}
+
+const { client } = runtime;
 
 let queueTail: Promise<void> = Promise.resolve();
 let activeOperations = 0;
@@ -233,6 +257,7 @@ export async function chatStream(
   });
 
   return await withOllamaLock("chatStream", { model: opts.model, messageCount: opts.messages.length }, async () => {
+    const streamStartedAt = Date.now();
     const stream = (await withTimeout(
       client.chat({
         model: opts.model,
@@ -251,17 +276,35 @@ export async function chatStream(
     });
 
     let full = "";
+    let finalChunkSeen = false;
+    let finalTokenAt = 0;
     try {
       for await (const chunk of stream as AsyncIterable<ChatResponse>) {
         const token = chunk.message?.content ?? "";
-        full += token;
-        try {
-          onToken(token);
-        } catch (callbackError) {
-          log.warn("Token callback failed", {
+        if (token) {
+          full += token;
+          finalTokenAt = Date.now();
+          try {
+            onToken(token);
+          } catch (callbackError) {
+            log.warn("Token callback failed", {
+              model: opts.model,
+              error: callbackError instanceof Error ? callbackError.message : String(callbackError),
+            });
+          }
+        }
+
+        if (chunk.done) {
+          finalChunkSeen = true;
+          console.log("STREAM FINAL TOKEN", {
             model: opts.model,
-            error: callbackError instanceof Error ? callbackError.message : String(callbackError),
+            outputChars: full.length,
           });
+          console.log("STREAM CLOSE INITIATED", {
+            model: opts.model,
+            closeDelayMs: finalTokenAt ? Date.now() - finalTokenAt : 0,
+          });
+          break;
         }
       }
     } catch (error) {
@@ -271,14 +314,26 @@ export async function chatStream(
         stream: true,
       });
     } finally {
+      console.log("STREAM CLOSED SUCCESSFULLY", {
+        model: opts.model,
+        finalChunkSeen,
+        totalDurationMs: Date.now() - streamStartedAt,
+      });
       log.info("Stream ended", {
         model: opts.model,
         stream: true,
         outputChars: full.length,
+        durationMs: Date.now() - streamStartedAt,
       });
     }
 
-    return full.trim();
+    const response = full.trim();
+    console.log("RESPONSE RESOLVED", {
+      model: opts.model,
+      responseChars: response.length,
+      totalLifecycleMs: Date.now() - streamStartedAt,
+    });
+    return response;
   });
 }
 

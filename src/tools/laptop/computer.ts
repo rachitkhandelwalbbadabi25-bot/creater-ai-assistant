@@ -1,50 +1,32 @@
-import { chromium, type Browser, type Page } from "playwright";
 import { createLogger } from "@utils/logger.js";
-import { openUrl } from "./launcher.js";
+import { createToolFailure, createToolSuccess, type ToolResult } from "@tools/toolResult.js";
+import { existsSync, statSync } from "node:fs";
+import { closeBrowser, getManagedPage, navigateToUrl } from "@tools/laptop/browser.js";
 
 const log = createLogger("tools/computer");
 
-let activeBrowser: Browser | null = null;
-let activePage: Page | null = null;
-
-/** Open a URL in the default browser (bypasses executor/safety checks). */
-async function openUrlInBrowser(url: string): Promise<void> {
-  console.log("[LAUNCH TRACE]", "src/tools/laptop/computer.ts", "openUrlInBrowser", url);
-  await openUrl(url);
-}
-
 // Browser Management
-export async function openBrowser(url?: string): Promise<string> {
+export async function openBrowser(url?: string): Promise<ToolResult> {
   const target = url || "https://www.google.com";
-  console.log("[LAUNCH TRACE]", "src/tools/laptop/computer.ts", "openBrowser", target);
-  await openUrlInBrowser(target);
-  return `Browser opened: ${target}`;
+  console.log("[PLAYWRIGHT PATH]", "src/tools/laptop/computer.ts", "openBrowser", target);
+  console.log("[BROWSER NAVIGATION]", target);
+  return await navigateToUrl(target);
 }
 
-export async function navigateTo(url: string): Promise<string> {
-  console.log("[LAUNCH TRACE]", "src/tools/laptop/computer.ts", "navigateTo", url);
-  return openBrowser(url);
+export async function navigateTo(url: string): Promise<ToolResult> {
+  console.log("[PLAYWRIGHT PATH]", "src/tools/laptop/computer.ts", "navigateTo", url);
+  console.log("[BROWSER NAVIGATION]", url);
+  return await navigateToUrl(url);
 }
 
-export async function closeBrowserWindow(): Promise<string> {
-  try {
-    if (activeBrowser) {
-      await activeBrowser.close();
-      activeBrowser = null;
-      activePage = null;
-    }
-    return "Browser closed";
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    log.error("closeBrowserWindow failed", err);
-    return `Browser close failed: ${errorMsg}`;
-  }
+export async function closeBrowserWindow(): Promise<ToolResult> {
+  return await closeBrowser();
 }
 
 // Mouse Control
 export async function clickAt(x: number, y: number): Promise<string> {
   try {
-    if (!activePage) throw new Error("No active browser. Open a browser first.");
+    const activePage = await getManagedPage();
     await activePage.mouse.click(x, y);
     return `Clicked at (${x}, ${y})`;
   } catch (err) {
@@ -56,7 +38,7 @@ export async function clickAt(x: number, y: number): Promise<string> {
 
 export async function clickSelector(selector: string): Promise<string> {
   try {
-    if (!activePage) throw new Error("No active browser.");
+    const activePage = await getManagedPage();
     await activePage.click(selector, { timeout: 5000 });
     return `Clicked: ${selector}`;
   } catch (err) {
@@ -68,7 +50,7 @@ export async function clickSelector(selector: string): Promise<string> {
 
 export async function rightClick(x: number, y: number): Promise<string> {
   try {
-    if (!activePage) throw new Error("No active browser.");
+    const activePage = await getManagedPage();
     await activePage.mouse.click(x, y, { button: "right" });
     return `Right clicked at (${x}, ${y})`;
   } catch (err) {
@@ -80,7 +62,7 @@ export async function rightClick(x: number, y: number): Promise<string> {
 
 export async function scrollPage(direction: "up" | "down", amount: number = 300): Promise<string> {
   try {
-    if (!activePage) throw new Error("No active browser.");
+    const activePage = await getManagedPage();
     await activePage.mouse.wheel(0, direction === "down" ? amount : -amount);
     return `Scrolled ${direction} by ${amount}px`;
   } catch (err) {
@@ -92,7 +74,7 @@ export async function scrollPage(direction: "up" | "down", amount: number = 300)
 
 export async function hoverAt(selector: string): Promise<string> {
   try {
-    if (!activePage) throw new Error("No active browser.");
+    const activePage = await getManagedPage();
     await activePage.hover(selector);
     return `Hovered over: ${selector}`;
   } catch (err) {
@@ -105,7 +87,7 @@ export async function hoverAt(selector: string): Promise<string> {
 // Keyboard Control
 export async function typeText(text: string, selector?: string): Promise<string> {
   try {
-    if (!activePage) throw new Error("No active browser.");
+    const activePage = await getManagedPage();
     if (selector) {
       await activePage.click(selector);
     }
@@ -120,7 +102,7 @@ export async function typeText(text: string, selector?: string): Promise<string>
 
 export async function pressKey(key: string): Promise<string> {
   try {
-    if (!activePage) throw new Error("No active browser.");
+    const activePage = await getManagedPage();
     await activePage.keyboard.press(key);
     return `Pressed key: ${key}`;
   } catch (err) {
@@ -132,7 +114,7 @@ export async function pressKey(key: string): Promise<string> {
 
 export async function keyboardShortcut(shortcut: string): Promise<string> {
   try {
-    if (!activePage) throw new Error("No active browser.");
+    const activePage = await getManagedPage();
     await activePage.keyboard.press(shortcut);
     return `Shortcut pressed: ${shortcut}`;
   } catch (err) {
@@ -145,7 +127,7 @@ export async function keyboardShortcut(shortcut: string): Promise<string> {
 // Screen Reading
 export async function getPageText(): Promise<string> {
   try {
-    if (!activePage) throw new Error("No active browser.");
+    const activePage = await getManagedPage();
     const text = await activePage.evaluate(() => document.body.innerText);
     return text.slice(0, 3000);
   } catch (err) {
@@ -157,7 +139,7 @@ export async function getPageText(): Promise<string> {
 
 export async function getPageTitle(): Promise<string> {
   try {
-    if (!activePage) throw new Error("No active browser.");
+    const activePage = await getManagedPage();
     return await activePage.title();
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
@@ -168,7 +150,7 @@ export async function getPageTitle(): Promise<string> {
 
 export async function findElement(selector: string): Promise<string> {
   try {
-    if (!activePage) throw new Error("No active browser.");
+    const activePage = await getManagedPage();
     const el = await activePage.$(selector);
     if (!el) return `Element not found: ${selector}`;
     const text = await el.textContent();
@@ -180,23 +162,41 @@ export async function findElement(selector: string): Promise<string> {
   }
 }
 
-export async function takeScreenshotOfPage(): Promise<string> {
+export async function takeScreenshotOfPage(): Promise<ToolResult> {
+  const startedAt = Date.now();
   try {
-    if (!activePage) throw new Error("No active browser.");
-    const path = `./screenshot_${Date.now()}.png`;
-    await activePage.screenshot({ path, fullPage: false });
-    return `Screenshot saved: ${path}`;
+    const activePage = await getManagedPage();
+    const savePath = `./screenshot_${Date.now()}.png`;
+    console.log("[EXECUTION ATTEMPTED]", { toolId: "computer.screenshot", savePath });
+    await activePage.screenshot({ path: savePath, fullPage: false });
+    console.log("[EXECUTION VERIFICATION START]", { toolId: "computer.screenshot", savePath });
+    const verified = existsSync(savePath) && statSync(savePath).size > 0;
+    if (!verified) {
+      console.log("[EXECUTION VERIFICATION FAILED]", { toolId: "computer.screenshot", savePath });
+      return createToolFailure(
+        "computer.screenshot",
+        startedAt,
+        "I tried to take the screenshot, but the file could not be verified.",
+        "Screenshot file was not created.",
+        { savePath }
+      );
+    }
+    console.log("[EXECUTION VERIFIED SUCCESS]", { toolId: "computer.screenshot", savePath });
+    return createToolSuccess("computer.screenshot", startedAt, `Screenshot saved: ${savePath}`, {
+      verified: true,
+      data: { savePath },
+    });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     log.error("takeScreenshotOfPage failed", err);
-    return `Screenshot failed: ${errorMsg}`;
+    return createToolFailure("computer.screenshot", startedAt, "I tried to take the screenshot, but it failed.", errorMsg);
   }
 }
 
 // Smart Actions
 export async function searchOnPage(searchText: string): Promise<string> {
   try {
-    if (!activePage) throw new Error("No active browser.");
+    const activePage = await getManagedPage();
     await activePage.keyboard.press("Control+f");
     await activePage.keyboard.type(searchText);
     return `Searching for: ${searchText}`;
@@ -209,7 +209,7 @@ export async function searchOnPage(searchText: string): Promise<string> {
 
 export async function fillForm(selector: string, value: string): Promise<string> {
   try {
-    if (!activePage) throw new Error("No active browser.");
+    const activePage = await getManagedPage();
     await activePage.fill(selector, value);
     return `Filled form field ${selector} with: ${value}`;
   } catch (err) {
@@ -221,7 +221,7 @@ export async function fillForm(selector: string, value: string): Promise<string>
 
 export async function selectDropdown(selector: string, value: string): Promise<string> {
   try {
-    if (!activePage) throw new Error("No active browser.");
+    const activePage = await getManagedPage();
     await activePage.selectOption(selector, value);
     return `Selected: ${value}`;
   } catch (err) {
@@ -233,7 +233,7 @@ export async function selectDropdown(selector: string, value: string): Promise<s
 
 export async function waitForElement(selector: string, timeout: number = 5000): Promise<string> {
   try {
-    if (!activePage) throw new Error("No active browser.");
+    const activePage = await getManagedPage();
     await activePage.waitForSelector(selector, { timeout });
     return `Element found: ${selector}`;
   } catch (err) {
@@ -246,7 +246,8 @@ export async function waitForElement(selector: string, timeout: number = 5000): 
 // YouTube Specific
 export async function playYouTube(query: string): Promise<string> {
   const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
-  console.log("[LAUNCH TRACE]", "src/tools/laptop/computer.ts", "playYouTube", searchUrl);
-  await openUrlInBrowser(searchUrl);
+  console.log("[PLAYWRIGHT PATH]", "src/tools/laptop/computer.ts", "playYouTube", searchUrl);
+  console.log("[BROWSER NAVIGATION]", searchUrl);
+  await navigateToUrl(searchUrl);
   return `YouTube opened with search: ${query}`;
 }

@@ -202,6 +202,7 @@ export async function chatStream(
   onToken: (token: string) => void
 ): Promise<string> {
   const provider = getProvider(opts.model);
+  const streamStartedAt = Date.now();
   log.info("Prompt received", {
     provider,
     model: opts.model,
@@ -212,14 +213,26 @@ export async function chatStream(
 
   if (provider === "ollama") {
     try {
-      return await ollamaChatStream(opts as any, onToken);
+      const response = await ollamaChatStream(opts as any, onToken);
+      console.log("RESPONSE RESOLVED", {
+        provider,
+        model: opts.model,
+        totalLifecycleMs: Date.now() - streamStartedAt,
+      });
+      return response;
     } catch (err) {
       log.error(`Local Ollama stream failed for model ${opts.model}: ${err}. Falling back to default model.`);
       const fallbackModel = env.DEFAULT_MODEL || "qwen2.5:3b";
       if (opts.model === fallbackModel) {
         throw err;
       }
-      return await ollamaChatStream({ ...opts, model: fallbackModel } as any, onToken);
+      const response = await ollamaChatStream({ ...opts, model: fallbackModel } as any, onToken);
+      console.log("RESPONSE RESOLVED", {
+        provider,
+        model: fallbackModel,
+        totalLifecycleMs: Date.now() - streamStartedAt,
+      });
+      return response;
     }
   }
 
@@ -227,21 +240,39 @@ export async function chatStream(
   try {
     const response = await chat(opts);
     onToken(response);
+    console.log("STREAM FINAL TOKEN", { provider, model: opts.model, outputChars: response.length });
+    console.log("STREAM CLOSE INITIATED", { provider, model: opts.model, closeDelayMs: 0 });
+    console.log("STREAM CLOSED SUCCESSFULLY", { provider, model: opts.model, totalDurationMs: Date.now() - streamStartedAt });
     log.info("Stream ended", {
       provider,
       model: opts.model,
       stream: false,
       outputChars: response.length,
+      durationMs: Date.now() - streamStartedAt,
+    });
+    console.log("RESPONSE RESOLVED", {
+      provider,
+      model: opts.model,
+      totalLifecycleMs: Date.now() - streamStartedAt,
     });
     return response;
   } catch (err) {
     const local = await fallbackToLocal(opts);
     onToken(local);
+    console.log("STREAM FINAL TOKEN", { provider, model: opts.model, outputChars: local.length });
+    console.log("STREAM CLOSE INITIATED", { provider, model: opts.model, closeDelayMs: 0 });
+    console.log("STREAM CLOSED SUCCESSFULLY", { provider, model: opts.model, totalDurationMs: Date.now() - streamStartedAt });
     log.info("Stream ended", {
       provider,
       model: opts.model,
       stream: false,
       outputChars: local.length,
+      durationMs: Date.now() - streamStartedAt,
+    });
+    console.log("RESPONSE RESOLVED", {
+      provider,
+      model: opts.model,
+      totalLifecycleMs: Date.now() - streamStartedAt,
     });
     return local;
   }

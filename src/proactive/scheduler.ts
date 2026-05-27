@@ -11,22 +11,39 @@ import { runMemoryMaintenance } from "@memory/summarizer.js";
 import { archiveStaleNodes } from "@memory/graph.js";
 import { persistLearnedPatterns } from "@emotion/learner.js";
 import { createLogger } from "@utils/logger.js";
+import { ENABLE_PROACTIVE_RUNTIME, logRuntimeFeatureFlags } from "../runtime/featureFlags.js";
 
 const log = createLogger("proactive/scheduler");
 
 const jobs: ScheduledTask[] = [];
+let schedulerStarted = false;
 
 /**
  * Start all proactive scheduled jobs.
  * Each job runs a specific task at a cron-defined interval.
  */
 export function startScheduler(): void {
+  logRuntimeFeatureFlags();
+  console.log("[AUTOMATION INIT]", "src/proactive/scheduler.ts", "startScheduler");
+  console.log("[BACKGROUND TASK]", "src/proactive/scheduler.ts", "scheduler");
+  if (schedulerStarted) {
+    log.info("Proactive scheduler is already running");
+    return;
+  }
+
+  if (!ENABLE_PROACTIVE_RUNTIME) {
+    log.info("Proactive scheduler disabled by runtime feature flag");
+    console.log("PROACTIVE SYSTEMS DISABLED");
+    return;
+  }
+
   if (!env.PROACTIVE_ENABLED) {
     log.info("Proactive scheduler is disabled");
     return;
   }
 
   log.info("Starting proactive scheduler...");
+  schedulerStarted = true;
 
   // 1. Morning briefing
   jobs.push(
@@ -95,5 +112,6 @@ export function startScheduler(): void {
 export function stopScheduler(): void {
   for (const job of jobs) job.stop();
   jobs.length = 0;
+  schedulerStarted = false;
   log.info("Scheduler stopped");
 }

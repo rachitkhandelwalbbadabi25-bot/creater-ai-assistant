@@ -1,16 +1,23 @@
 "use server";
 
-import { processMessage } from "@graph/supervisor.js";
-import { getAppStats } from "@utils/stats.js";
-import { getSystemInfo } from "@tools/laptop/system.js";
-import { db } from "@memory/db.js";
-import { env } from "@config/index.js";
+import os from "os";
+import { logRuntimeFeatureFlags } from "../../runtime/featureFlags.js";
+
+async function getDb() {
+  const module = await import("@memory/db.js");
+  return module.db;
+}
 
 /**
  * Sends a message to the AI supervisor and returns the final response.
  */
 export async function chatAction(message: string) {
+  console.log("[CHAT ACTION START]", { message });
   try {
+    logRuntimeFeatureFlags();
+    console.log("[ACTIVE RUNTIME PATH]", { channel: "web", entrypoint: "chatAction" });
+    console.log("ACTIVE ROUTER MODULE LOADED", "@graph/supervisor.js");
+    const { processMessage } = await import("@graph/supervisor.js");
     const response = await processMessage(message, "web");
     return { success: true, response };
   } catch (error: any) {
@@ -20,6 +27,8 @@ export async function chatAction(message: string) {
       errorMessage = `Model not found error: ${errorMessage}. Please check your model configuration.`;
     }
     return { success: false, error: errorMessage };
+  } finally {
+    console.log("[CHAT ACTION END]", { message });
   }
 }
 
@@ -27,21 +36,59 @@ export async function chatAction(message: string) {
  * Fetches current system metrics and app stats.
  */
 export async function getStatusAction() {
+  console.log("[ACTION START]", { action: "getStatusAction" });
   try {
-    const [systemInfo, appStats] = await Promise.all([
-      getSystemInfo(),
-      getAppStats(),
-    ]);
+    const { getAppStats } = await import("@utils/stats.js");
+    const appStats = getAppStats();
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const cpu = os.cpus();
 
     return {
       success: true,
       data: {
-        system: systemInfo,
+        system: {
+          cpu: {
+            model: cpu[0]?.model ?? "Unavailable",
+            usage: 0,
+            cores: cpu.length,
+          },
+          ram: {
+            total: `${Math.round(totalMem / 1024 / 1024 / 1024)} GB`,
+            used: `${Math.round((totalMem - freeMem) / 1024 / 1024 / 1024)} GB`,
+            usagePercent: totalMem > 0 ? Math.round(((totalMem - freeMem) / totalMem) * 100) : 0,
+          },
+          battery: null,
+          disk: [],
+          uptime: `${Math.floor(os.uptime() / 3600)}h ${Math.floor((os.uptime() % 3600) / 60)}m`,
+          os: `${os.type()} ${os.release()}`,
+        },
         stats: appStats,
       },
     };
   } catch (error: any) {
-    return { success: false, error: error.message };
+    console.error("[ACTION ERROR]", { action: "getStatusAction", error: error?.message ?? String(error) });
+    return {
+      success: true,
+      data: {
+        system: {
+          cpu: { model: "Unavailable", usage: 0, cores: 0 },
+          ram: { total: "0 B", used: "0 B", usagePercent: 0 },
+          battery: null,
+          disk: [],
+          uptime: "0h 0m",
+          os: "Unavailable",
+        },
+        stats: {
+          messageCount: 0,
+          factCount: 0,
+          taskCount: 0,
+          lastMood: "Neutral",
+        },
+      },
+    };
+  } finally {
+    console.log("[ACTION END]", { action: "getStatusAction" });
   }
 }
 
@@ -49,7 +96,9 @@ export async function getStatusAction() {
  * Fetches long-term memories (facts) with optional search.
  */
 export async function getMemoriesAction(query?: string) {
+  console.log("[ACTION START]", { action: "getMemoriesAction", query });
   try {
+    const db = await getDb();
     let sql = "SELECT * FROM facts";
     const params: any[] = [];
 
@@ -64,6 +113,8 @@ export async function getMemoriesAction(query?: string) {
     return { success: true, data: rows };
   } catch (error: any) {
     return { success: false, error: error.message };
+  } finally {
+    console.log("[ACTION END]", { action: "getMemoriesAction", query });
   }
 }
 
@@ -71,7 +122,9 @@ export async function getMemoriesAction(query?: string) {
  * Fetches analytics data: mood trends and activity.
  */
 export async function getAnalyticsAction() {
+  console.log("[ACTION START]", { action: "getAnalyticsAction" });
   try {
+    const db = await getDb();
     // 1. Mood Trends (last 7 days)
     const moodRows = db.prepare(`
       SELECT mood, created_at 
@@ -98,6 +151,8 @@ export async function getAnalyticsAction() {
     };
   } catch (error: any) {
     return { success: false, error: error.message };
+  } finally {
+    console.log("[ACTION END]", { action: "getAnalyticsAction" });
   }
 }
 
@@ -105,6 +160,7 @@ export async function getAnalyticsAction() {
  * Updates application settings.
  */
 export async function updateSettingsAction(settings: any) {
+  console.log("[ACTION START]", { action: "updateSettingsAction" });
   try {
     // In a real app, you might save these to a config file or DB.
     // For now, we'll return success to simulate the state update.
@@ -112,6 +168,8 @@ export async function updateSettingsAction(settings: any) {
     return { success: true };
   } catch (error: any) {
     return { success: false, error: error.message };
+  } finally {
+    console.log("[ACTION END]", { action: "updateSettingsAction" });
   }
 }
 
@@ -120,7 +178,9 @@ export async function updateSettingsAction(settings: any) {
  * Optional search query filters by label / description.
  */
 export async function getGraphAction(query?: string) {
+  console.log("[ACTION START]", { action: "getGraphAction", query });
   try {
+    const db = await getDb();
     let nodeRows: any[];
     if (query) {
       const q = `%${query}%`;
@@ -165,5 +225,7 @@ export async function getGraphAction(query?: string) {
     return { success: true, data: { nodes, stats } };
   } catch (error: any) {
     return { success: false, error: error.message };
+  } finally {
+    console.log("[ACTION END]", { action: "getGraphAction", query });
   }
 }

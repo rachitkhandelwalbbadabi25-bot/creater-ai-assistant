@@ -20,8 +20,12 @@ export default function Sidebar({ activeTab, setActiveTab }: { activeTab: string
 
   useEffect(() => {
     const fetchData = async () => {
-      const res = await getStatusAction();
-      if (res.success) setMetrics(res.data);
+      try {
+        const res = await getStatusAction();
+        if (res.success) setMetrics(res.data);
+      } catch (error) {
+        console.error("[FETCH END]", { action: "getStatusAction", error });
+      }
     };
     fetchData();
     const timer = setInterval(fetchData, 10000);

@@ -23,6 +23,8 @@ let isRunning = false;
  * Phase 1: Basic Detection & "Listening..." feedback.
  */
 export async function startWakeWordDetection(onWake: () => void) {
+  console.log("[AUTOMATION INIT]", "src/voice/wakeWord.ts", "startWakeWordDetection");
+  console.log("[ACCESSIBILITY INIT]", "src/voice/wakeWord.ts", "startWakeWordDetection");
   if (isRunning) {
     log.info("Wake word detection is already running.");
     return;
@@ -67,6 +69,8 @@ export async function startWakeWordDetection(onWake: () => void) {
     
     recorder.start();
     isInterrupted = false;
+    console.log("[KEYBOARD HOOK]", "src/voice/wakeWord.ts", "wakeWordListener");
+    console.log("[MOUSE HOOK]", "src/voice/wakeWord.ts", "wakeWordListener");
 
     // 3. Main Loop
     const MAX_RECORD_SECONDS = 15;
@@ -90,6 +94,7 @@ export async function startWakeWordDetection(onWake: () => void) {
           isListening = true;
           audioBuffer = [];
           silenceFrames = 0;
+          console.log("[BACKGROUND TASK]", "src/voice/wakeWord.ts", "wake detection");
           voiceEvents.emit("wake");
           onWake();
         }
@@ -114,6 +119,7 @@ export async function startWakeWordDetection(onWake: () => void) {
         if (silenceFrames >= silenceFramesThreshold || audioBuffer.length >= maxFrames * porcupine.frameLength) {
           log.info("Finished listening. Processing audio...");
           isListening = false;
+          console.log("[BACKGROUND TASK]", "src/voice/wakeWord.ts", "speech transcription");
           voiceEvents.emit("processing_speech");
           
           // Send to STT

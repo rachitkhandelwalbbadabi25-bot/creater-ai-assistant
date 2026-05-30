@@ -3,6 +3,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from "fs";
+import { writeFile } from "fs/promises";
 import { join } from "path";
 import { env } from "@config/index.js";
 import { embedSingle, embed } from "@llm/ollama.js";
@@ -10,6 +11,14 @@ import { createLogger } from "@utils/logger.js";
 import { generateId } from "@utils/helpers.js";
 
 const log = createLogger("memory/vector");
+
+const embeddingQueue: Array<{
+  text: string;
+  metadata: Record<string, unknown>;
+  resolve?: (value: VectorEntry) => void;
+  reject?: (reason: any) => void;
+}> = [];
+let isProcessingQueue = false;
 
 // ─── Types ────────────────────────────────────────────────────────────────────────
 export interface VectorEntry {
@@ -62,6 +71,64 @@ export function saveVectorStore(): void {
   log.mem(`Saved ${entries.length} vectors to disk`);
 }
 
+export async function saveVectorStoreAsync(): Promise<void> {
+  try {
+    await writeFile(STORE_PATH, JSON.stringify(entries), "utf-8");
+    log.mem(`Saved ${entries.length} vectors to disk asynchronously`);
+  } catch (err) {
+    log.error("Failed to save vector store asynchronously", err);
+  }
+}
+
+async function processQueue() {
+  if (isProcessingQueue) return;
+  isProcessingQueue = true;
+
+  while (embeddingQueue.length > 0) {
+    const item = embeddingQueue.shift();
+    if (!item) continue;
+
+    console.log("BACKGROUND EMBEDDING STARTED");
+    try {
+      let vector: number[];
+      try {
+        vector = await embedSingle(item.text);
+      } catch (e) {
+        log.warn("Failed to generate embedding for vector entry — using fallback empty vector", { error: String(e) });
+        vector = new Array(768).fill(0);
+      }
+
+      const entry: VectorEntry = {
+        id: generateId(),
+        text: item.text,
+        vector,
+        metadata: item.metadata,
+        createdAt: new Date().toISOString(),
+      };
+
+      entries.push(entry);
+      log.mem(`Added vector entry`, { id: entry.id, textLen: item.text.length });
+
+      if (entries.length % 10 === 0) {
+        await saveVectorStoreAsync();
+      }
+
+      console.log("BACKGROUND EMBEDDING COMPLETE");
+      if (item.resolve) {
+        item.resolve(entry);
+      }
+    } catch (err) {
+      console.log("BACKGROUND EMBEDDING FAILED");
+      log.error("Background embedding failed", err);
+      if (item.reject) {
+        item.reject(err);
+      }
+    }
+  }
+
+  isProcessingQueue = false;
+}
+
 // ─── Core Operations ──────────────────────────────────────────────────────────────
 
 /**
@@ -71,29 +138,18 @@ export async function addEntry(
   text: string,
   metadata: Record<string, unknown> = {}
 ): Promise<VectorEntry> {
-  let vector: number[];
-  try {
-    vector = await embedSingle(text);
-  } catch (e) {
-    log.warn("Failed to generate embedding for vector entry — using fallback empty vector", { error: String(e) });
-    vector = new Array(768).fill(0);
-  }
-  
-  const entry: VectorEntry = {
-    id: generateId(),
-    text,
-    vector,
-    metadata,
-    createdAt: new Date().toISOString(),
-  };
+  console.log("BACKGROUND EMBEDDING QUEUED");
+  const promise = new Promise<VectorEntry>((resolve, reject) => {
+    embeddingQueue.push({ text, metadata, resolve, reject });
+  });
 
-  entries.push(entry);
-  log.mem(`Added vector entry`, { id: entry.id, textLen: text.length });
+  setTimeout(() => {
+    processQueue().catch((err) => {
+      console.log("BACKGROUND EMBEDDING FAILED");
+    });
+  }, 0);
 
-  // Auto-save every 10 entries
-  if (entries.length % 10 === 0) saveVectorStore();
-
-  return entry;
+  return promise;
 }
 
 /**
@@ -102,28 +158,20 @@ export async function addEntry(
 export async function addEntries(
   items: Array<{ text: string; metadata?: Record<string, unknown> }>
 ): Promise<VectorEntry[]> {
-  const texts = items.map((i) => i.text);
-  let vectors: number[][];
-  try {
-    vectors = await embed(texts);
-  } catch (e) {
-    log.warn("Failed to generate batch embedding — using fallback empty vectors", { error: String(e) });
-    vectors = items.map(() => new Array(768).fill(0));
-  }
+  const promises = items.map((item) => {
+    console.log("BACKGROUND EMBEDDING QUEUED");
+    return new Promise<VectorEntry>((resolve, reject) => {
+      embeddingQueue.push({ text: item.text, metadata: item.metadata ?? {}, resolve, reject });
+    });
+  });
 
-  const newEntries: VectorEntry[] = items.map((item, i) => ({
-    id: generateId(),
-    text: item.text,
-    vector: vectors[i] || new Array(768).fill(0),
-    metadata: item.metadata ?? {},
-    createdAt: new Date().toISOString(),
-  }));
+  setTimeout(() => {
+    processQueue().catch((err) => {
+      console.log("BACKGROUND EMBEDDING FAILED");
+    });
+  }, 0);
 
-  entries.push(...newEntries);
-  saveVectorStore();
-  log.mem(`Batch-added ${newEntries.length} vector entries`);
-
-  return newEntries;
+  return Promise.all(promises);
 }
 
 /**

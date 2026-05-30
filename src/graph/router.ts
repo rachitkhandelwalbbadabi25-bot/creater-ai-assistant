@@ -27,11 +27,36 @@ const log = createLogger("graph/router");
 export async function routerNode(state: GraphState): Promise<GraphState> {
   log.info(`Routing: "${state.currentInput.slice(0, 80)}"`);
 
+  const normalizedInput = state.currentInput.toLowerCase().trim().replace(/[^\w\s]/g, "");
+  const isSimpleChitchat = normalizedInput === "hello" ||
+                           normalizedInput === "hi" ||
+                           normalizedInput === "hey" ||
+                           normalizedInput === "how are you" ||
+                           normalizedInput === "thanks" ||
+                           normalizedInput === "okay" ||
+                           normalizedInput.startsWith("hello ") ||
+                           normalizedInput.startsWith("hi ") ||
+                           normalizedInput.includes("how are you") ||
+                           normalizedInput.startsWith("thanks") ||
+                           normalizedInput === "ok";
+
   // ── 1. Emotion detection (parallel with routing) ───────────────────────────
   const emotionPromise = detectEmotion(state.currentInput);
 
   // ── 2. Intent classification + model selection ─────────────────────────────
-  const routeResult = await routeRequest(state.currentInput);
+  let routeResult;
+  if (isSimpleChitchat) {
+    routeResult = {
+      ok: true,
+      value: {
+        intent: { intent: "chitchat", confidence: 1.0 },
+        agent: "taskAgent",
+        model: state.selectedModel || Models.PRIMARY,
+      }
+    };
+  } else {
+    routeResult = await routeRequest(state.currentInput);
+  }
 
   // ── 3. Get emotion result ──────────────────────────────────────────────────
   const emotion = await emotionPromise;
@@ -42,8 +67,9 @@ export async function routerNode(state: GraphState): Promise<GraphState> {
   // ── 4. Memory retrieval ────────────────────────────────────────────────────
   const memoryContext = await retrieveContext({
     query: state.currentInput,
-    recentMessageCount: 8,
-    semanticResultCount: 4,
+    recentMessageCount: isSimpleChitchat ? 2 : 8,
+    semanticResultCount: isSimpleChitchat ? 0 : 4,
+    includeProfile: !isSimpleChitchat,
   });
 
   // ── 5. Build context block ─────────────────────────────────────────────────

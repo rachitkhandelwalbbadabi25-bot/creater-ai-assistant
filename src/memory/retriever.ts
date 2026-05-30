@@ -55,28 +55,30 @@ export async function retrieveContext(
 
   // ── 2. Semantic search in vector store ──────────────────────────────────────
   let relevantMemories: string[] = [];
-  try {
-    const vectorResults = await vectorSearch(query, semanticResultCount, 0.35);
-    relevantMemories = vectorResults.map(
-      (r) => `[${(r.score * 100).toFixed(0)}% match] ${r.entry.text}`
-    );
-  } catch (e) {
-    log.warn("Vector search failed — continuing without semantic results", {
-      error: String(e),
-    });
-  }
+  if (semanticResultCount > 0) {
+    try {
+      const vectorResults = await vectorSearch(query, semanticResultCount, 0.35);
+      relevantMemories = vectorResults.map(
+        (r) => `[${(r.score * 100).toFixed(0)}% match] ${r.entry.text}`
+      );
+    } catch (e) {
+      log.warn("Vector search failed — continuing without semantic results", {
+        error: String(e),
+      });
+    }
 
-  // ── 3. Mid-term: keyword search in summaries ───────────────────────────────
-  const keywords = extractKeywords(query);
-  if (keywords.length > 0) {
-    const summaryResults = searchSummaries(keywords[0]!, 3);
-    for (const s of summaryResults) {
-      relevantMemories.push(`[summary] ${s.content}`);
+    // ── 3. Mid-term: keyword search in summaries ───────────────────────────────
+    const keywords = extractKeywords(query);
+    if (keywords.length > 0) {
+      const summaryResults = searchSummaries(keywords[0]!, 3);
+      for (const s of summaryResults) {
+        relevantMemories.push(`[summary] ${s.content}`);
+      }
     }
   }
 
   // ── 4. Long-term: fact search ──────────────────────────────────────────────
-  if (includeProfile) {
+  if (includeProfile && semanticResultCount > 0) {
     const factResults = searchFacts(query, 5);
     for (const f of factResults) {
       relevantMemories.push(`[fact:${f.category}] ${f.key}: ${f.value}`);
@@ -84,22 +86,24 @@ export async function retrieveContext(
   }
 
   // ── 5. Graph: entity-based relational search ────────────────────────────────
-  const entities = extractEntities(query);
-  let graphNodes = searchGraph(query, 5); // Start with full query match
+  if (semanticResultCount > 0) {
+    const entities = extractEntities(query);
+    let graphNodes = searchGraph(query, 5); // Start with full query match
 
-  // Search by extracted entities (names, tech, places)
-  for (const ent of entities) {
-    const entResults = searchGraph(ent, 3);
-    for (const n of entResults) {
-      if (!graphNodes.find(existing => existing.id === n.id)) {
-        graphNodes.push(n);
+    // Search by extracted entities (names, tech, places)
+    for (const ent of entities) {
+      const entResults = searchGraph(ent, 3);
+      for (const n of entResults) {
+        if (!graphNodes.find(existing => existing.id === n.id)) {
+          graphNodes.push(n);
+        }
       }
     }
-  }
 
-  // Limit to top 8 most important nodes
-  for (const n of graphNodes.sort((a, b) => b.importance - a.importance).slice(0, 8)) {
-    relevantMemories.push(`[graph:${n.type}] ${n.label}${n.description ? ": " + n.description : ""}`);
+    // Limit to top 8 most important nodes
+    for (const n of graphNodes.sort((a, b) => b.importance - a.importance).slice(0, 8)) {
+      relevantMemories.push(`[graph:${n.type}] ${n.label}${n.description ? ": " + n.description : ""}`);
+    }
   }
 
   // ── 6. System: current laptop stats ─────────────────────────────────────────
@@ -114,7 +118,7 @@ export async function retrieveContext(
   }
 
   // ── 7. Profile: All known facts ──────────────────────────────────────────────
-  const userProfileFacts = getAllFacts();
+  const userProfileFacts = semanticResultCount > 0 ? getAllFacts() : undefined;
 
   const context: MemoryContext = {
     recentMessages,
@@ -124,7 +128,7 @@ export async function retrieveContext(
     upcomingDeadlines: [],
     systemStatus,
     userProfileFacts,
-    graphContext: buildGraphContext(10), // Limit to top 10 for prompt injection
+    graphContext: semanticResultCount > 0 ? buildGraphContext(10) : undefined,
   };
 
   log.mem(`Retrieved context: ${recentMessages.length} recent, ${relevantMemories.length} relevant`);

@@ -1,21 +1,18 @@
-// ════════════════════════════════════════════════════════════════════════════════
-// src/graph/supervisor.ts — Main orchestrator: routes to agents, manages flow
+// src/graph/supervisor.ts - Main orchestrator: routes to agents, manages flow
 // This is the entry point for processing any user message.
-// ════════════════════════════════════════════════════════════════════════════════
 
 import { createInitialState, type GraphState } from "./state.js";
-import { routerNode } from "./router.js";
 import { taskAgentNode } from "./taskAgent.js";
 import { emotionAgentNode } from "./emotionAgent.js";
 import { laptopAgentNode } from "./laptopAgent.js";
 import { projectAgentNode } from "./projectAgent.js";
 import { skillAgentNode } from "./skillAgent.js";
+import { classifyRuntimeMode } from "@runtime/RuntimeModeClassifier.js";
 import { createLogger } from "@utils/logger.js";
-import { formatErrorForUser, CreaterError } from "@utils/errorHandler.js";
+import { formatErrorForUser } from "@utils/errorHandler.js";
 
 const log = createLogger("graph/supervisor");
 
-// ─── Agent Registry ───────────────────────────────────────────────────────────────
 type AgentNode = (state: GraphState) => Promise<GraphState>;
 
 const AGENTS: Record<string, AgentNode> = {
@@ -26,17 +23,46 @@ const AGENTS: Record<string, AgentNode> = {
   skillAgent: skillAgentNode,
 };
 
-// ─── Main Processing Pipeline ─────────────────────────────────────────────────────
-/**
- * Process a user message through the full agent pipeline:
- *
- * 1. Router → classify intent, detect emotion, retrieve memory
- * 2. Agent → selected agent processes the request
- * 3. Response → final answer returned to user
- *
- * This is the SINGLE entry point for all user interactions
- * (TUI, Telegram, Web, Voice all call this).
- */
+async function routeConversationalState(state: GraphState): Promise<GraphState> {
+  const { routerNode } = await import("./router.js");
+  return routerNode(state);
+}
+
+async function routeExecutionState(
+  state: GraphState,
+  input: string
+): Promise<{ state: GraphState; bypassedExecution: boolean }> {
+  const runtimeClassification = classifyRuntimeMode(input);
+  console.log("RUNTIME MODE CLASSIFIER ACTIVE");
+  log.info("RUNTIME MODE CLASSIFIER ACTIVE", { classification: runtimeClassification });
+
+  if (runtimeClassification.mode === "execution") {
+    console.log("EXECUTION MODE ACTIVE");
+    console.log("DIRECT EXECUTION ROUTE ACTIVE");
+    console.log("EXECUTION BYPASS CONFIRMED");
+    console.log("CONVERSATIONAL PIPELINE SKIPPED");
+
+    return {
+      state: await laptopAgentNode({
+        ...state,
+        currentInput: runtimeClassification.normalizedInput,
+        intent: runtimeClassification.intent ?? "system_control",
+        intentConfidence: runtimeClassification.confidence,
+        targetAgent: runtimeClassification.targetAgent ?? "laptopAgent",
+        selectedModel: runtimeClassification.selectedModel ?? state.selectedModel,
+        contextBlock: "",
+        memoryRetrieved: false,
+        currentStep: "executing",
+      }),
+      bypassedExecution: true,
+    };
+  }
+
+  const routedState = await routeConversationalState(state);
+  log.info(`Routed -> agent=${routedState.targetAgent}, intent=${routedState.intent}, mood=${routedState.mood}`);
+  return { state: routedState, bypassedExecution: false };
+}
+
 export async function processMessageStreaming(
   input: string,
   channel: GraphState["channel"] = "tui",
@@ -44,26 +70,25 @@ export async function processMessageStreaming(
 ): Promise<string> {
   const startTime = Date.now();
   log.info("STREAMING MODE ACTIVE");
+
   try {
-    // Initialize state with token handler
     let state = createInitialState(input, channel);
     state.onToken = onToken;
     log.info(`Processing (stream): "${input.slice(0, 80)}..." [${channel}]`);
 
-    // Routing
-    state = await routerNode(state);
-    log.info(`Routed → agent=${state.targetAgent}, intent=${state.intent}, mood=${state.mood}`);
+    const routed = await routeExecutionState(state, input);
+    state = routed.state;
 
-    // Execute selected agent (agents already respect state.onToken for streaming)
-    const agentFn = AGENTS[state.targetAgent];
-    if (!agentFn) {
-      log.warn(`Unknown agent "${state.targetAgent}" — falling back to taskAgent`);
-      state = await taskAgentNode(state);
-    } else {
-      state = await agentFn(state);
+    if (!routed.bypassedExecution) {
+      const agentFn = AGENTS[state.targetAgent];
+      if (!agentFn) {
+        log.warn(`Unknown agent "${state.targetAgent}" - falling back to taskAgent`);
+        state = await taskAgentNode(state);
+      } else {
+        state = await agentFn(state);
+      }
     }
 
-    // Confirmation handling (same as blocking version)
     if (state.requiresConfirmation && state.pendingConfirmation) {
       log.info(`Awaiting user confirmation for: ${state.pendingConfirmation.toolId}`);
       return state.response;
@@ -83,13 +108,6 @@ export async function processMessageStreaming(
   }
 }
 
-// ─── Main Processing Pipeline (Blocking) ───────────────────────────────────────
-/**
- * Process a user message through the full agent pipeline **without** streaming.
- *
- * This mirrors `processMessageStreaming` but does **not** expose a token callback.
- * It is used by callers that only need the final response.
- */
 export async function processMessage(
   input: string,
   channel: GraphState["channel"] = "tui"
@@ -97,36 +115,27 @@ export async function processMessage(
   const startTime = Date.now();
 
   try {
-    // Initialise state
     let state = createInitialState(input, channel);
     log.info(`Processing: "${input.slice(0, 80)}..." [${channel}]`);
 
-    // Routing (classify intent + emotion + memory)
-    state = await routerNode(state);
-    log.info(
-      `Routed → agent=${state.targetAgent}, intent=${state.intent}, mood=${state.mood}`
-    );
+    const routed = await routeExecutionState(state, input);
+    state = routed.state;
 
-    // Execute selected agent
-    const agentFn = AGENTS[state.targetAgent];
-    if (!agentFn) {
-      log.warn(
-        `Unknown agent "${state.targetAgent}" — falling back to taskAgent`
-      );
-      state = await taskAgentNode(state);
-    } else {
-      state = await agentFn(state);
+    if (!routed.bypassedExecution) {
+      const agentFn = AGENTS[state.targetAgent];
+      if (!agentFn) {
+        log.warn(`Unknown agent "${state.targetAgent}" - falling back to taskAgent`);
+        state = await taskAgentNode(state);
+      } else {
+        state = await agentFn(state);
+      }
     }
 
-    // Handle confirmation requests
     if (state.requiresConfirmation && state.pendingConfirmation) {
-      log.info(
-        `Awaiting user confirmation for: ${state.pendingConfirmation.toolId}`
-      );
-      return state.response; // Return the confirmation prompt
+      log.info(`Awaiting user confirmation for: ${state.pendingConfirmation.toolId}`);
+      return state.response;
     }
 
-    // Return response
     const elapsed = Date.now() - startTime;
     log.info(`Response generated in ${elapsed}ms`, {
       agent: state.targetAgent,
@@ -141,9 +150,6 @@ export async function processMessage(
   }
 }
 
-/**
- * Process a confirmation response (user said yes/no to a tool execution).
- */
 export async function processConfirmation(
   confirmed: boolean,
   pendingToolId: string,
@@ -153,7 +159,6 @@ export async function processConfirmation(
     return "👍 Theek hai, cancel kar diya. Kuch aur chahiye?";
   }
 
-  // TODO: Execute the pending tool call
-  log.info(`User confirmed tool: ${pendingToolId}`);
+  log.info(`User confirmed tool: ${pendingToolId}`, { pendingParams });
   return `✅ Running ${pendingToolId}... (tool execution coming soon)`;
 }

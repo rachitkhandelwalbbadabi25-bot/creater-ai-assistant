@@ -109,6 +109,7 @@ export interface ConversationState {
   threadState?: ThreadState;
   shortTermMemory?: ShortTermMemory;
   recentIntents?: Intent[];
+  recentEntities?: string[];
   // *** Response strategy & rendering extensions ***
 
   // user personality profile for rendering
@@ -244,5 +245,4 @@ export interface StateTransitionRecord {
   to: string;
   reason: string;
 }
-
 

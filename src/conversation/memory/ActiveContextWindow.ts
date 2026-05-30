@@ -8,8 +8,12 @@ export class ActiveContextWindowManager {
 
   static pushContext(state: ConversationState, window: ContextWindow): ConversationState {
     const existing = state.activeContexts ?? [];
-    const updated = [...existing, window];
-    // Keep only top MAX_WINDOWS by relevanceScore (descending)
+    const nextContext = {
+      id: window.id,
+      relevance: window.relevanceScore ?? 0,
+    };
+    const updated = [...existing, nextContext];
+    // Keep only top MAX_WINDOWS by relevance (descending)
     updated.sort((a, b) => (b.relevance ?? 0) - (a.relevance ?? 0));
     const trimmed = updated.slice(0, this.MAX_WINDOWS);
     return { ...state, activeContexts: trimmed };

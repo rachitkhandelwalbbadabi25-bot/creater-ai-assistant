@@ -10,7 +10,6 @@ export async function POST(req: Request) {
           await processMessageStreaming(message, "web", (text: string) => {
             controller.enqueue(new TextEncoder().encode(text));
           });
-          console.log("STREAM FINAL RESPONSE FLUSHED");
           controller.close();
         } catch (error: any) {
           console.error("Streaming error:", error);

@@ -27,13 +27,7 @@ export function logEmotion(
   mood: Mood, energy: EnergyLevel, confidence: number,
   trigger?: string, messageId?: string
 ): void {
-  setTimeout(() => {
-    try {
-      insertLogStmt.run(generateId(), mood, energy, confidence, trigger ?? null, messageId ?? null);
-    } catch (err) {
-      log.error("Failed to log emotion asynchronously", err);
-    }
-  }, 0);
+  insertLogStmt.run(generateId(), mood, energy, confidence, trigger ?? null, messageId ?? null);
   log.mem(`Logged: ${mood} (${energy}, ${(confidence * 100).toFixed(0)}%)`);
 }
 

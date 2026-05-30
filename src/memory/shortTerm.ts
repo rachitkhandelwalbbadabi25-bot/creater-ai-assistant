@@ -65,19 +65,13 @@ export function addMessage(
   const tokens = estimateTokens(content);
   const ttl = env.SHORT_TERM_TTL_HOURS;
 
-  setTimeout(() => {
-    try {
-      insertStmt.run(
-        id, role, content, channel,
-        metadata?.emotion ?? null,
-        metadata?.intent ?? null,
-        tokens,
-        ttl.toString()
-      );
-    } catch (err) {
-      log.error("Failed to insert message asynchronously", err);
-    }
-  }, 0);
+  insertStmt.run(
+    id, role, content, channel,
+    metadata?.emotion ?? null,
+    metadata?.intent ?? null,
+    tokens,
+    ttl.toString()
+  );
 
   log.mem(`Stored ${role} message (${tokens} tokens)`, { id, channel });
 

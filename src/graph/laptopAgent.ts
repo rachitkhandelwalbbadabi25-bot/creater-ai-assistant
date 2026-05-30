@@ -30,13 +30,13 @@ async function tryDirectLaunch(input: string): Promise<string | null> {
   if (target === "browser" || target === "web browser") {
     console.log("[LAUNCH TRACE]", "src/graph/laptopAgent.ts", "tryDirectLaunch", "https://www.google.com");
     await openUrl("https://www.google.com");
-    return "Browser opened successfully.";
+    return "Task completed";
   }
 
   if (target === "youtube" || target === "you tube") {
     console.log("[LAUNCH TRACE]", "src/graph/laptopAgent.ts", "tryDirectLaunch", "https://www.youtube.com");
     await openUrl("https://www.youtube.com");
-    return "YouTube opened successfully.";
+    return "Task completed";
   }
 
   const appTargets = new Set([
@@ -60,8 +60,7 @@ async function tryDirectLaunch(input: string): Promise<string | null> {
   if (appTargets.has(target)) {
     console.log("[LAUNCH TRACE]", "src/graph/laptopAgent.ts", "tryDirectLaunch", target);
     await openApp(target);
-    const capitalizedTarget = target.charAt(0).toUpperCase() + target.slice(1);
-    return `${capitalizedTarget} opened successfully.`;
+    return "Task completed";
   }
 
   return null;
@@ -74,17 +73,13 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
   try {
     const directLaunchResponse = await tryDirectLaunch(state.currentInput);
     if (directLaunchResponse) {
-      console.log("EXECUTION RESPONSE GENERATED");
       addMessage("assistant", directLaunchResponse, state.channel);
-      console.log("EXECUTION RESPONSE SENT");
       return { ...state, response: directLaunchResponse, currentStep: "done" };
     }
   } catch (err) {
     log.error("Direct launch failed", err, { command: state.currentInput });
     const userMessage = formatErrorForUser(err);
-    console.log("EXECUTION RESPONSE GENERATED");
     addMessage("assistant", userMessage, state.channel);
-    console.log("EXECUTION RESPONSE SENT");
     return { ...state, response: userMessage, currentStep: "error" };
   }
 
@@ -180,50 +175,44 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
         executionResults.push({ tool: toolCall.id, result });
       }
 
-      // If we executed tools, generate deterministic response based on results
+      // If we executed tools, generate a new response based on results
       if (executionResults.length > 0) {
-        // Build deterministic messages per result
-        const deterministicMessages: string[] = executionResults.map(entry => {
-          const result = entry.result as any;
-          if (!result || !result.success) {
-            // Return error message if available
-            return result?.message ?? "Execution failed.";
-          }
-          switch (result.kind) {
-            case "screenshot":
-              return "Screenshot captured successfully.";
-            case "directory":
-              return "Folder opened successfully.";
-            case "file":
-              return "File opened successfully.";
-            case "url":
-              return "URL opened successfully.";
-            case "app":
-              return `${result.matchedApp || "Application"} opened successfully.`;
-            default:
-              return result.message ?? "Task completed.";
-          }
+        const allLaunchesCompleted = executionResults.every((entry) => {
+          const result = entry.result;
+          return result && result.success === true && result.message === "Task completed";
         });
-        const finalResponse = deterministicMessages.join(" ");
-        console.log("EXECUTION RESPONSE GENERATED");
-        addMessage("assistant", finalResponse, state.channel);
-        console.log("EXECUTION RESPONSE SENT");
-        return { ...state, response: finalResponse, currentStep: "done" };
+
+        if (allLaunchesCompleted) {
+          addMessage("assistant", "Task completed", state.channel);
+          return { ...state, response: "Task completed", currentStep: "done" };
+        }
+
+        const friendlyMessages: ChatMessage[] = [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: state.currentInput },
+          { role: "assistant", content: `I executed these tools: ${JSON.stringify(executionResults)}` },
+          { role: "user", content: "Now give a short friendly response in the same language the user used. Confirm success only for tools whose result shows success=true. Do not say Task completed unless the result message is exactly Task completed." }
+        ];
+
+        const friendlyResponse = await chat({
+          model: state.selectedModel,
+          messages: friendlyMessages,
+          options: GenerationPresets.conversational,
+        });
+
+        addMessage("assistant", friendlyResponse, state.channel);
+        return { ...state, response: friendlyResponse, currentStep: "done" };
       }
     }
   } catch (err) {
     log.error("Tool selection or execution failed", err, { command: state.currentInput });
     const userMessage = formatErrorForUser(err);
-    console.log("EXECUTION RESPONSE GENERATED");
     addMessage("assistant", userMessage, state.channel);
-    console.log("EXECUTION RESPONSE SENT");
     return { ...state, response: userMessage, currentStep: "error" };
   }
 
   addMessage("user", state.currentInput, state.channel, { intent: state.intent });
-  console.log("EXECUTION RESPONSE GENERATED");
   addMessage("assistant", response, state.channel);
-  console.log("EXECUTION RESPONSE SENT");
 
   return { ...state, response, currentStep: "done" };
 }

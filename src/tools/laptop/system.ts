@@ -30,9 +30,7 @@ export async function getSystemInfo(): Promise<SystemSnapshot> {
     si.time(),
   ]);
 
-  const cpuTemp = process.platform === "darwin" || process.platform === "linux"
-    ? await si.cpuTemperature().catch(() => ({ main: undefined }))
-    : { main: undefined };
+  const cpuTemp = await si.cpuTemperature().catch(() => ({ main: undefined }));
 
   return {
     cpu: {

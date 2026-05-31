@@ -181,14 +181,52 @@ export async function findElement(selector: string): Promise<string> {
 }
 
 export async function takeScreenshotOfPage(): Promise<string> {
+  log.info("SCREENSHOT CAPTURE START");
   try {
-    if (!activePage) throw new Error("No active browser.");
-    const path = `./screenshot_${Date.now()}.png`;
-    await activePage.screenshot({ path, fullPage: false });
-    return `Screenshot saved: ${path}`;
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const dir = path.resolve("./data/screenshots");
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const savePath = path.join(dir, `screenshot_${Date.now()}.png`);
+    
+    // PowerShell script to take a native screenshot
+    const script = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+$bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+$graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+$bitmap.Save('${savePath.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Png)
+$graphics.Dispose()
+$bitmap.Dispose()
+    `;
+    
+    const proc = Bun.spawn({
+      cmd: ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+      stdout: "pipe",
+      stderr: "pipe",
+      windowsHide: true,
+    });
+    
+    const [exitCode, stdout, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+
+    if (exitCode !== 0) {
+      log.error("SCREENSHOT CAPTURE FAILED", { exitCode, stderr, stdout });
+      throw new Error(`Screenshot failed: ${stderr.trim() || stdout.trim()}`);
+    }
+
+    log.info("SCREENSHOT SAVE COMPLETE", { savePath });
+    return `Screenshot saved: ${savePath}`;
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    log.error("takeScreenshotOfPage failed", err);
+    log.error("SCREENSHOT CAPTURE FAILED", err);
     return `Screenshot failed: ${errorMsg}`;
   }
 }

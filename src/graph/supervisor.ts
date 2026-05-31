@@ -7,7 +7,7 @@ import { emotionAgentNode } from "./emotionAgent.js";
 import { laptopAgentNode } from "./laptopAgent.js";
 import { projectAgentNode } from "./projectAgent.js";
 import { skillAgentNode } from "./skillAgent.js";
-import { classifyRuntimeMode } from "@runtime/RuntimeModeClassifier.js";
+import { classifyRuntimeMode } from "../runtime/RuntimeModeClassifier.js";
 import { createLogger } from "@utils/logger.js";
 import { formatErrorForUser } from "@utils/errorHandler.js";
 

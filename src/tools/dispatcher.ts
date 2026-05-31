@@ -45,32 +45,22 @@ export async function dispatchTool(toolId: string, params: any): Promise<any> {
         // TODO: Implement notification tool
         return { success: true, message: "Notification sent (mock)" };
       case "system.open_app":
-        const appRes = await launcherTools.openApp(params.app);
-        if (params.app.toLowerCase().includes("chrome") && params.__state?.browserState) {
-          params.__state.browserState.isLaunched = true;
-          params.__state.browserState.activeContext = true;
-        }
-        return appRes;
+        return await launcherTools.openApp(params.app);
       case "system.open_path":
         return await launcherTools.openFileOrPath(params.path);
 
       // ── Browser ──
       case "browser.navigate":
-        // Use ONE deterministic execution strategy via launcher (native Chrome)
-        const url = params.url;
-        const navRes = await launcherTools.openUrl(url);
-        // Track browser context deterministically
-        if (params.__state?.browserState) {
-          params.__state.browserState.isLaunched = true;
-          params.__state.browserState.activeContext = true;
-          params.__state.browserState.currentUrl = url;
+        try {
+          return await browserTools.navigateToUrl(params.url);
+        } catch (err) {
+          log.warn(`Playwright failed for ${params.url}, falling back to safe launcher`, { error: String(err) });
+          return await launcherTools.openUrl(params.url);
         }
-        return navRes;
       case "browser.extract_text":
         return await browserTools.extractText(params.url);
       case "browser.screenshot":
-        // Map to native screenshot for deterministic execution without active browser requirement
-        return await computerTools.takeScreenshotOfPage();
+        return await browserTools.takeScreenshot(params.url, params.savePath || `./screenshot_${Date.now()}.png`);
 
       // ── Editor / Git ──
       case "editor.open_file":
@@ -81,24 +71,10 @@ export async function dispatchTool(toolId: string, params: any): Promise<any> {
         return await editorTools.gitCommit(params.repo_path, params.message);
 
       // ── Computer Control ──
-      case "computer.open_browser": {
-        const res = await computerTools.openBrowser(params.url);
-        if (params.__state?.browserState) {
-          params.__state.browserState.isLaunched = true;
-          params.__state.browserState.activeContext = true;
-          params.__state.browserState.currentUrl = params.url || "https://www.google.com";
-        }
-        return res;
-      }
-      case "computer.navigate": {
-        const res = await computerTools.navigateTo(params.url);
-        if (params.__state?.browserState) {
-          params.__state.browserState.isLaunched = true;
-          params.__state.browserState.activeContext = true;
-          params.__state.browserState.currentUrl = params.url;
-        }
-        return res;
-      }
+      case "computer.open_browser":
+        return await computerTools.openBrowser(params.url);
+      case "computer.navigate":
+        return await computerTools.navigateTo(params.url);
       case "computer.click":
         return await computerTools.clickAt(params.x, params.y);
       case "computer.click_selector":
@@ -117,22 +93,10 @@ export async function dispatchTool(toolId: string, params: any): Promise<any> {
         return await computerTools.getPageText();
       case "computer.fill_form":
         return await computerTools.fillForm(params.selector, params.value);
-      case "computer.play_youtube": {
-        const res = await computerTools.playYouTube(params.query);
-        if (params.__state?.browserState) {
-          params.__state.browserState.isLaunched = true;
-          params.__state.browserState.activeContext = true;
-          params.__state.browserState.currentUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(params.query)}`;
-        }
-        return res;
-      }
-      case "computer.close_browser": {
-        const res = await computerTools.closeBrowserWindow();
-        if (params.__state?.browserState) {
-          params.__state.browserState.activeContext = false;
-        }
-        return res;
-      }
+      case "computer.play_youtube":
+        return await computerTools.playYouTube(params.query);
+      case "computer.close_browser":
+        return await computerTools.closeBrowserWindow();
 
       default:
         throw new ToolError(toolId, `No implementation found for tool: ${toolId}`);

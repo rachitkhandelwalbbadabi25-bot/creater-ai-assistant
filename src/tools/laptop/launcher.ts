@@ -90,16 +90,9 @@ function matchWindowsApp(command: string): { matchedApp: string; resolvedPath: s
 
 async function runWindowsOpen(target: string, kind: LaunchKind): Promise<void> {
   launchTrace("src/tools/laptop/launcher.ts", "runWindowsOpen", target);
-  // Log start of Windows open operation
-  log.info("WINDOWS OPEN START", { target, kind });
-
-  // Determine appropriate PowerShell command based on launch kind
   const script = kind === "file" || kind === "directory"
-    ? `Invoke-Item -LiteralPath "${target}"`
-    : `Start-Process -FilePath "${target}"`;
-
-  // Debug log the constructed PowerShell script
-  log.debug("WINDOWS OPEN COMMAND", { script });
+    ? "param([string]$Target) Invoke-Item -LiteralPath $Target"
+    : "param([string]$Target) Start-Process -FilePath $Target";
 
   const proc = Bun.spawn({
     cmd: [
@@ -110,6 +103,7 @@ async function runWindowsOpen(target: string, kind: LaunchKind): Promise<void> {
       "Bypass",
       "-Command",
       script,
+      target,
     ],
     stdout: "pipe",
     stderr: "pipe",
@@ -123,16 +117,9 @@ async function runWindowsOpen(target: string, kind: LaunchKind): Promise<void> {
   ]);
 
   if (exitCode !== 0) {
-    log.error("WINDOWS OPEN FAILED", { exitCode, stderr, stdout });
     throw new Error(`Windows open failed with exit code ${exitCode}: ${stderr.trim() || stdout.trim() || "no stderr"}`);
   }
-
-  // Success logging
-  log.info("WINDOWS OPEN SUCCESS", { target });
 }
-
-
-
 
 async function runCrossPlatformOpen(target: string, kind: LaunchKind): Promise<void> {
   launchTrace("src/tools/laptop/launcher.ts", "runCrossPlatformOpen", target);
@@ -168,29 +155,6 @@ export function resolveLaunchTarget(command: string): Omit<LaunchResult, "succes
       kind: "url",
       receivedCommand,
       resolvedPath: receivedCommand,
-    };
-  }
-
-  // Windows Special Folders deterministic resolution
-  const folderMatch = receivedCommand.toLowerCase().replace(/^open\s+/, "").trim();
-  const homedir = process.env.USERPROFILE || process.env.HOME || "~";
-  const specialFolders: Record<string, string> = {
-    downloads: path.join(homedir, "Downloads"),
-    desktop: path.join(homedir, "Desktop"),
-    documents: path.join(homedir, "Documents"),
-    music: path.join(homedir, "Music"),
-    videos: path.join(homedir, "Videos"),
-    pictures: path.join(homedir, "Pictures"),
-  };
-
-  if (specialFolders[folderMatch]) {
-    const folderPath = specialFolders[folderMatch];
-    log.info("SPECIAL FOLDER RESOLVED", { folderName: folderMatch, path: folderPath });
-    log.info("FILESYSTEM PATH VERIFIED", { path: folderPath });
-    return {
-      kind: "directory",
-      receivedCommand,
-      resolvedPath: folderPath,
     };
   }
 

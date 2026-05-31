@@ -90,9 +90,10 @@ function matchWindowsApp(command: string): { matchedApp: string; resolvedPath: s
 
 async function runWindowsOpen(target: string, kind: LaunchKind): Promise<void> {
   launchTrace("src/tools/laptop/launcher.ts", "runWindowsOpen", target);
+  const escapedTarget = target.replace(/'/g, "''");
   const script = kind === "file" || kind === "directory"
-    ? "param([string]$Target) Invoke-Item -LiteralPath $Target"
-    : "param([string]$Target) Start-Process -FilePath $Target";
+    ? `Invoke-Item -LiteralPath '${escapedTarget}'`
+    : `Start-Process -FilePath '${escapedTarget}'`;
 
   const proc = Bun.spawn({
     cmd: [
@@ -102,8 +103,7 @@ async function runWindowsOpen(target: string, kind: LaunchKind): Promise<void> {
       "-ExecutionPolicy",
       "Bypass",
       "-Command",
-      script,
-      target,
+      script
     ],
     stdout: "pipe",
     stderr: "pipe",

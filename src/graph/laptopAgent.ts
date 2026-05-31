@@ -12,6 +12,8 @@ import { addMessage } from "@memory/shortTerm.js";
 import { createLogger } from "@utils/logger.js";
 import { formatErrorForUser } from "@utils/errorHandler.js";
 import { openApp, openUrl } from "@tools/laptop/launcher.js";
+import { parseExecutionPlan } from "../runtime/deterministicOrchestration/parser.js";
+import { executeWorkflow } from "../runtime/deterministicOrchestration/orchestrator.js";
 
 const log = createLogger("graph/laptopAgent");
 
@@ -70,6 +72,50 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
   log.info(`LaptopAgent: intent=${state.intent}`);
   log.info("Received command", { command: state.currentInput });
 
+  // ── 1. DETERMINISTIC EXECUTION ISOLATION ──
+  if (state.currentStep === "executing") {
+    console.log("DETERMINISTIC EXECUTION PATH ACTIVE");
+    console.log("QWEN EXECUTION BYPASS CONFIRMED");
+    log.info("DETERMINISTIC EXECUTION PATH ACTIVE");
+    log.info("QWEN EXECUTION BYPASS CONFIRMED");
+
+    try {
+      const plan = parseExecutionPlan(state.currentInput);
+      console.log("EXECUTION PLAN GENERATED");
+      log.info("EXECUTION PLAN GENERATED", { plan });
+
+      console.log("EXECUTION WORKFLOW START");
+      log.info("EXECUTION WORKFLOW START");
+      
+      const execState = await executeWorkflow(plan);
+      
+      console.log("EXECUTION WORKFLOW COMPLETE");
+      log.info("EXECUTION WORKFLOW COMPLETE", { status: execState.status });
+      
+      // Check if native Chrome was launched
+      if (execState.browserState?.isLaunched) {
+        console.log("NATIVE BROWSER LAUNCH ACTIVE");
+        log.info("NATIVE BROWSER LAUNCH ACTIVE");
+      }
+
+      if (execState.status === "error") {
+        const errResponse = `Execution failed: ${execState.failedStep?.error || "Unknown error"}`;
+        addMessage("assistant", errResponse, state.channel);
+        return { ...state, response: errResponse, currentStep: "error" };
+      }
+      
+      const successResponse = "Task completed";
+      addMessage("assistant", successResponse, state.channel);
+      return { ...state, response: successResponse, currentStep: "done" };
+    } catch (err) {
+      log.error("Execution workflow failed", err);
+      const userMessage = formatErrorForUser(err);
+      addMessage("assistant", userMessage, state.channel);
+      return { ...state, response: userMessage, currentStep: "error" };
+    }
+  }
+
+  // ── 2. CONVERSATIONAL TOOL PARSING (Only for non-execution modes) ──
   try {
     const directLaunchResponse = await tryDirectLaunch(state.currentInput);
     if (directLaunchResponse) {

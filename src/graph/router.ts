@@ -1,8 +1,3 @@
-// ════════════════════════════════════════════════════════════════════════════════
-// src/graph/router.ts — Intent classification + agent routing node
-// First node in the graph — determines which agent handles the request.
-// ════════════════════════════════════════════════════════════════════════════════
-
 import type { GraphState } from "./state.js";
 import { Models } from "@config/models.js";
 import { routeRequest } from "@llm/router.js";
@@ -14,39 +9,47 @@ import { createLogger } from "@utils/logger.js";
 
 const log = createLogger("graph/router");
 
-/**
- * Router node — the first step in the agent graph.
- *
- * Performs:
- * 1. Emotion detection (hybrid: keywords + ML)
- * 2. Intent classification (fast LLM)
- * 3. Memory retrieval (RAG)
- * 4. Context assembly
- * 5. Agent selection
- */
+function shouldBypassConversationalRouting(state: GraphState): boolean {
+  return (
+    state.currentStep === "executing" ||
+    state.intent === "system_control" ||
+    state.intent === "browser_action" ||
+    state.intent === "file_operation" ||
+    state.intent === "web_navigation" ||
+    state.intent === "web_search"
+  );
+}
+
 export async function routerNode(state: GraphState): Promise<GraphState> {
   log.info(`Routing: "${state.currentInput.slice(0, 80)}"`);
 
-  // ── 1. Emotion detection (parallel with routing) ───────────────────────────
+  if (shouldBypassConversationalRouting(state)) {
+    log.info("EXECUTION SEARCH BYPASS ACTIVE", {
+      intent: state.intent,
+      currentStep: state.currentStep,
+    });
+    return {
+      ...state,
+      targetAgent: state.targetAgent || "laptopAgent",
+      selectedModel: state.selectedModel || Models.FAST,
+      contextBlock: state.contextBlock || "",
+      memoryRetrieved: state.memoryRetrieved,
+      currentStep: state.currentStep === "executing" ? "executing" : "planning",
+    };
+  }
+
   const emotionPromise = detectEmotion(state.currentInput);
-
-  // ── 2. Intent classification + model selection ─────────────────────────────
   const routeResult = await routeRequest(state.currentInput);
-
-  // ── 3. Get emotion result ──────────────────────────────────────────────────
   const emotion = await emotionPromise;
 
-  // Log emotion to history
   logEmotion(emotion.mood, emotion.energy, emotion.confidence, state.currentInput);
 
-  // ── 4. Memory retrieval ────────────────────────────────────────────────────
   const memoryContext = await retrieveContext({
     query: state.currentInput,
     recentMessageCount: 8,
     semanticResultCount: 4,
   });
 
-  // ── 5. Build context block ─────────────────────────────────────────────────
   const emotionCtx = {
     currentMood: emotion.mood,
     confidence: emotion.confidence,
@@ -55,7 +58,6 @@ export async function routerNode(state: GraphState): Promise<GraphState> {
   const fullCtx = buildFullContext(emotionCtx, memoryContext);
   const contextBlock = contextToString(fullCtx);
 
-  // ── 6. Assemble updated state ──────────────────────────────────────────────
   if (routeResult.ok) {
     const route = routeResult.value;
     return {
@@ -73,8 +75,7 @@ export async function routerNode(state: GraphState): Promise<GraphState> {
     };
   }
 
-  // Routing failed — fall back to taskAgent with primary model
-  log.warn("Routing failed — falling back to taskAgent");
+  log.warn("Routing failed - falling back to taskAgent");
   return {
     ...state,
     intent: "unknown",

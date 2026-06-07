@@ -9,20 +9,47 @@ import { ToolError } from "@utils/errorHandler.js";
 const log = createLogger("tools/browser");
 
 let browserInstance: any = null;
+let launchInProgress: Promise<any> | null = null;
+let idleTimer: NodeJS.Timeout | null = null;
+const IDLE_TIMEOUT_MS: number =
+  Number(process.env.PLAYWRIGHT_IDLE_TIMEOUT_MS) || 5 * 60 * 1000;
 
 async function getBrowser() {
-  if (browserInstance) return browserInstance;
-  const { chromium, firefox, webkit } = await import("playwright");
-  const browsers = { chromium, firefox, webkit };
-  const browserType = browsers[env.PLAYWRIGHT_BROWSER as keyof typeof browsers] ?? chromium;
-  browserInstance = await browserType.launch({ headless: env.PLAYWRIGHT_HEADLESS });
-  log.info(`Browser launched: ${env.PLAYWRIGHT_BROWSER} (headless=${env.PLAYWRIGHT_HEADLESS})`);
+  // Reuse an existing, still‑connected browser
+  if (browserInstance && browserInstance.isConnected?.()) {
+    log.info("EXISTING BROWSER REUSED");
+    return browserInstance;
+  }
+
+  // If a launch is already in progress, wait for it
+  if (launchInProgress) {
+    log.info("DUPLICATE BROWSER LAUNCH PREVENTED");
+    await launchInProgress;
+    return browserInstance;
+  }
+
+  // Start a new launch
+  launchInProgress = (async () => {
+    const { chromium, firefox, webkit } = await import("playwright");
+    const browsers = { chromium, firefox, webkit };
+    const browserType = browsers[env.PLAYWRIGHT_BROWSER as keyof typeof browsers] ?? chromium;
+    const instance = await browserType.launch({ headless: env.PLAYWRIGHT_HEADLESS });
+    browserInstance = instance;
+    log.info(`Browser launched: ${env.PLAYWRIGHT_BROWSER} (headless=${env.PLAYWRIGHT_HEADLESS})`);
+    log.info("PLAYWRIGHT SINGLETON VERIFIED");
+    resetIdleTimer();
+    return instance;
+  })();
+
+  await launchInProgress;
+  launchInProgress = null;
   return browserInstance;
 }
 
 export async function navigateToUrl(url: string): Promise<string> {
   log.tool(`Navigating to: ${url}`);
   const browser = await getBrowser();
+  resetIdleTimer();
   const page = await browser.newPage();
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
   const title = await page.title();
@@ -33,6 +60,7 @@ export async function navigateToUrl(url: string): Promise<string> {
 export async function extractText(url: string): Promise<string> {
   log.tool(`Extracting text from: ${url}`);
   const browser = await getBrowser();
+  resetIdleTimer();
   const page = await browser.newPage();
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
   const text = await page.evaluate(() => document.body.innerText);
@@ -43,6 +71,7 @@ export async function extractText(url: string): Promise<string> {
 export async function takeScreenshot(url: string, savePath: string): Promise<string> {
   log.tool(`Screenshot: ${url} → ${savePath}`);
   const browser = await getBrowser();
+  resetIdleTimer();
   const page = await browser.newPage();
   await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
   await page.screenshot({ path: savePath, fullPage: false });
@@ -54,6 +83,38 @@ export async function closeBrowser(): Promise<void> {
   if (browserInstance) {
     await browserInstance.close();
     browserInstance = null;
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
     log.info("Browser closed");
   }
 }
+
+function resetIdleTimer(): void {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+  }
+  idleTimer = setTimeout(async () => {
+    log.info("PLAYWRIGHT AUTO CLOSE TRIGGERED");
+    await closeBrowser();
+    log.info("PLAYWRIGHT CLEANUP COMPLETE");
+  }, IDLE_TIMEOUT_MS);
+  log.info("PLAYWRIGHT IDLE TIMER STARTED");
+}
+// Graceful shutdown: close browser on process exit
+process.on('SIGINT', async () => {
+  log.info('Process SIGINT received, closing browser');
+  await closeBrowser();
+  process.exit(0);
+});
+process.on('SIGTERM', async () => {
+  log.info('Process SIGTERM received, closing browser');
+  await closeBrowser();
+  process.exit(0);
+});
+process.on('exit', async () => {
+  log.info('Process exit event, ensuring browser is closed');
+  await closeBrowser();
+});
+

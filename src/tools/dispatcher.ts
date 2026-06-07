@@ -50,13 +50,12 @@ export async function dispatchTool(toolId: string, params: any): Promise<any> {
         return await launcherTools.openFileOrPath(params.path);
 
       // ── Browser ──
-      case "browser.navigate":
-        try {
-          return await browserTools.navigateToUrl(params.url);
-        } catch (err) {
-          log.warn(`Playwright failed for ${params.url}, falling back to safe launcher`, { error: String(err) });
-          return await launcherTools.openUrl(params.url);
-        }
+        case "browser.navigate":
+          // FAST URL NAVIGATION DETECTED – bypass Playwright for simple navigation
+          log.info("PLAYWRIGHT BYPASS ACTIVE", { url: params.url });
+          const result = await launcherTools.openUrl(params.url);
+          log.info("DIRECT URL LAUNCH EXECUTED", { url: params.url, result });
+          return result;
       case "browser.extract_text":
         return await browserTools.extractText(params.url);
       case "browser.screenshot":

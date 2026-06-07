@@ -62,7 +62,9 @@ export async function listenAndTranscribe(durationSeconds = 5): Promise<string> 
       
       try {
         unlinkSync(tempFile); // Cleanup
-      } catch {}
+      } catch (error) {
+        log.warn("Non-critical error in speech processing", { error: error instanceof Error ? error.message : String(error) });
+    }
       
       resolve(text);
     }, durationSeconds * 1000);

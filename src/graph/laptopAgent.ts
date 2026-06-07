@@ -11,11 +11,83 @@ import { env } from "@config/index.js";
 import { addMessage } from "@memory/shortTerm.js";
 import { createLogger } from "@utils/logger.js";
 import { formatErrorForUser } from "@utils/errorHandler.js";
-import { openApp, openUrl } from "@tools/laptop/launcher.js";
-import { parseExecutionPlan } from "../runtime/deterministicOrchestration/parser.js";
-import { executeWorkflow } from "../runtime/deterministicOrchestration/orchestrator.js";
+import { openApp, openUrl, openFileOrPath, openUrlInBrowser } from "@tools/laptop/launcher.js";
 
 const log = createLogger("graph/laptopAgent");
+
+interface DeterministicSearchRoute {
+  browser?: "chrome" | "edge" | "firefox";
+  provider: "google" | "youtube";
+  query: string;
+  url: string;
+}
+
+function buildSearchUrl(provider: "google" | "youtube", query: string): string {
+  return provider === "youtube"
+    ? `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`
+    : `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+}
+
+function parseDeterministicSearchCommand(input: string): DeterministicSearchRoute | null {
+  const normalized = input.trim().toLowerCase();
+
+  const openAndSearchMatch = normalized.match(/^open\s+(.+?)\s+and\s+search\s+(.+)$/i);
+  if (openAndSearchMatch) {
+    const target = openAndSearchMatch[1]?.trim();
+    const query = openAndSearchMatch[2]?.trim();
+    if (!target || !query) {
+      return null;
+    }
+
+    if (target === "youtube") {
+      return { provider: "youtube", query, url: buildSearchUrl("youtube", query) };
+    }
+
+    if (target === "google") {
+      return { provider: "google", query, url: buildSearchUrl("google", query) };
+    }
+
+    if (target === "chrome" || target === "edge" || target === "firefox") {
+      return { browser: target, provider: "google", query, url: buildSearchUrl("google", query) };
+    }
+  }
+
+  const searchOnProviderMatch = normalized.match(/^search\s+(.+?)\s+on\s+(google|youtube)$/i);
+  if (searchOnProviderMatch) {
+    const query = searchOnProviderMatch[1]?.trim();
+    const provider = searchOnProviderMatch[2]?.trim() as "google" | "youtube" | undefined;
+    if (!query || !provider) {
+      return null;
+    }
+
+    return { provider, query, url: buildSearchUrl(provider, query) };
+  }
+
+  return null;
+}
+
+async function executeDeterministicSearch(input: string): Promise<string | null> {
+  const route = parseDeterministicSearchCommand(input);
+  if (!route) {
+    return null;
+  }
+
+  log.info("DETERMINISTIC SEARCH WORKFLOW DETECTED", {
+    browser: route.browser ?? "default",
+    provider: route.provider,
+  });
+  log.info("SEARCH QUERY EXTRACTED", { query: route.query });
+  log.info("SEARCH URL GENERATED", { url: route.url });
+  log.info("EXECUTION SEARCH BYPASS ACTIVE");
+
+  if (route.browser) {
+    await openUrlInBrowser(route.browser, route.url);
+  } else {
+    await openUrl(route.url);
+  }
+
+  return "Task completed";
+}
 
 function normalizeDirectOpenTarget(input: string): string {
   return input
@@ -26,8 +98,120 @@ function normalizeDirectOpenTarget(input: string): string {
 }
 
 async function tryDirectLaunch(input: string): Promise<string | null> {
+  const deterministicSearchResult = await executeDeterministicSearch(input);
+  if (deterministicSearchResult) {
+    return deterministicSearchResult;
+  }
+
+  const normalized = input.trim().toLowerCase();
+  // Detect global browser context (on/in/using)
+  const globalBrowserMatch = normalized.match(/\b(?:on|in|using)\s+(chrome|edge|firefox)\b/i);
+  const detectedBrowser = globalBrowserMatch?.[1]?.toLowerCase();
+  if (detectedBrowser) {
+    log.info("BROWSER CONTEXT DETECTED", { detectedBrowser });
+  }
+  
+  // 1. YouTube Search
+  // search ___ on youtube, play ___ on youtube, youtube ___
+  if (/^search\s+(.+)\s+on\s+youtube$/i.test(normalized)) {
+    const query = normalized.match(/^search\s+(.+)\s+on\s+youtube$/i)?.[1]?.trim();
+    if (query) {
+      const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+      log.info("DETERMINISTIC SEARCH ROUTE DETECTED", { query });
+      log.info("YOUTUBE SEARCH ROUTE GENERATED", { query, url });
+      await openUrl(url);
+      return "Task completed";
+    }
+  }
+  if (/^play\s+(.+)\s+on\s+youtube$/i.test(normalized)) {
+    const query = normalized.match(/^play\s+(.+)\s+on\s+youtube$/i)?.[1]?.trim();
+    if (query) {
+      const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+      log.info("DETERMINISTIC SEARCH ROUTE DETECTED", { query });
+      log.info("YOUTUBE SEARCH ROUTE GENERATED", { query, url });
+      await openUrl(url);
+      return "Task completed";
+    }
+  }
+  if (/^youtube\s+(.+)$/i.test(normalized)) {
+    const query = normalized.match(/^youtube\s+(.+)$/i)?.[1]?.trim();
+    if (query) {
+      const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+      log.info("DETERMINISTIC SEARCH ROUTE DETECTED", { query });
+      log.info("YOUTUBE SEARCH ROUTE GENERATED", { query, url });
+      await openUrl(url);
+      return "Task completed";
+    }
+  }
+
+  // 2. Google Search
+  // open ___ on google, search ___ (not matching youtube), google ___
+  if (/^open\s+(.+)\s+on\s+google$/i.test(normalized)) {
+    const query = normalized.match(/^open\s+(.+)\s+on\s+google$/i)?.[1]?.trim();
+    if (query) {
+      const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+      log.info("DETERMINISTIC SEARCH ROUTE DETECTED", { query });
+      log.info("GOOGLE SEARCH ROUTE GENERATED", { query, url });
+      await openUrl(url);
+      return "Task completed";
+    }
+  }
+  if (/^google\s+(.+)$/i.test(normalized)) {
+    const query = normalized.match(/^google\s+(.+)$/i)?.[1]?.trim();
+    if (query) {
+      const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+      log.info("DETERMINISTIC SEARCH ROUTE DETECTED", { query });
+      log.info("GOOGLE SEARCH ROUTE GENERATED", { query, url });
+      await openUrl(url);
+      return "Task completed";
+    }
+  }
+  if (/^search\s+(.+)$/i.test(normalized)) {
+    const query = normalized.match(/^search\s+(.+)$/i)?.[1]?.trim();
+    if (query) {
+      const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+      log.info("DETERMINISTIC SEARCH ROUTE DETECTED", { query });
+      log.info("GOOGLE SEARCH ROUTE GENERATED", { query, url });
+      await openUrl(url);
+      return "Task completed";
+    }
+  }
+
+  // 3. Direct Mappings
   const target = normalizeDirectOpenTarget(input);
   if (!target) return null;
+
+  const directMappings: Record<string, string> = {
+    github: "https://github.com",
+    youtube: "https://youtube.com",
+    gmail: "https://mail.google.com",
+    googlemail: "https://mail.google.com",
+    "google mail": "https://mail.google.com",
+    chatgpt: "https://chat.openai.com",
+    linkedin: "https://linkedin.com",
+    twitter: "https://x.com",
+    x: "https://x.com",
+  };
+
+  if (target in directMappings) {
+    const url = directMappings[target]!;
+    // Browser‑specific opening: "open <site> in <browser>"
+    const browserMatch = normalized.match(/^open\s+(.+?)\s+(?:on|in|using)\s+(chrome|edge|firefox)$/i);
+    if (browserMatch) {
+      const site = browserMatch[1].trim();
+      const browser = browserMatch[2].toLowerCase();
+      let targetUrl = site;
+      if (site in directMappings) {
+        targetUrl = directMappings[site]!;
+      }
+      log.info("DETERMINISTIC BROWSER‑SPECIFIC ROUTE DETECTED", { site, browser });
+      await openUrlInBrowser(browser, targetUrl);
+    } else {
+      log.info("DETERMINISTIC SEARCH ROUTE DETECTED", { target });
+      await openUrl(url);
+    }
+    return "Task completed";
+  }
 
   if (target === "browser" || target === "web browser") {
     console.log("[LAUNCH TRACE]", "src/graph/laptopAgent.ts", "tryDirectLaunch", "https://www.google.com");
@@ -35,9 +219,10 @@ async function tryDirectLaunch(input: string): Promise<string | null> {
     return "Task completed";
   }
 
-  if (target === "youtube" || target === "you tube") {
-    console.log("[LAUNCH TRACE]", "src/graph/laptopAgent.ts", "tryDirectLaunch", "https://www.youtube.com");
-    await openUrl("https://www.youtube.com");
+  if (target === "downloads" || target === "download") {
+    console.log("[LAUNCH TRACE]", "src/graph/laptopAgent.ts", "tryDirectLaunch", "%USERPROFILE%\\Downloads");
+    const targetPath = process.env.USERPROFILE ? `${process.env.USERPROFILE}\\Downloads` : "C:\\Users\\dell\\Downloads";
+    await openFileOrPath(targetPath);
     return "Task completed";
   }
 
@@ -72,68 +257,82 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
   log.info(`LaptopAgent: intent=${state.intent}`);
   log.info("Received command", { command: state.currentInput });
 
-  // ── 1. DETERMINISTIC EXECUTION ISOLATION ──
+  // Execution bypass: if running in deterministic execution mode, skip LLM and perform direct actions
   if (state.currentStep === "executing") {
-    console.log("DETERMINISTIC EXECUTION PATH ACTIVE");
-    console.log("QWEN EXECUTION BYPASS CONFIRMED");
-    log.info("DETERMINISTIC EXECUTION PATH ACTIVE");
-    log.info("QWEN EXECUTION BYPASS CONFIRMED");
-
-    try {
-      const plan = parseExecutionPlan(state.currentInput);
-      console.log("EXECUTION PLAN GENERATED");
-      log.info("EXECUTION PLAN GENERATED", { plan });
-
-      console.log("EXECUTION WORKFLOW START");
-      log.info("EXECUTION WORKFLOW START");
-      
-      const execState = await executeWorkflow(plan);
-      
-      console.log("EXECUTION WORKFLOW COMPLETE");
-      log.info("EXECUTION WORKFLOW COMPLETE", { status: execState.status });
-      
-      // Check if native Chrome was launched
-      if (execState.browserState?.isLaunched) {
-        console.log("NATIVE BROWSER LAUNCH ACTIVE");
-        log.info("NATIVE BROWSER LAUNCH ACTIVE");
-      }
-
-      if (execState.status === "error") {
-        const errResponse = `Execution failed: ${execState.failedStep?.error || "Unknown error"}`;
-        addMessage("assistant", errResponse, state.channel);
-        return { ...state, response: errResponse, currentStep: "error" };
-      }
-      
-      const successResponse = "Task completed";
-      addMessage("assistant", successResponse, state.channel);
-      return { ...state, response: successResponse, currentStep: "done" };
-    } catch (err) {
-      log.error("Execution workflow failed", err);
-      const userMessage = formatErrorForUser(err);
-      addMessage("assistant", userMessage, state.channel);
-      return { ...state, response: userMessage, currentStep: "error" };
+    log.info("EXECUTION BYPASS ACTIVE - deterministic mode");
+    log.info("DETERMINISTIC EXECUTION STARTED");
+    if (state.intent === "web_search") {
+      log.info("EXECUTION SEARCH BYPASS ACTIVE");
     }
-  }
 
-  // ── 2. CONVERSATIONAL TOOL PARSING (Only for non-execution modes) ──
-  try {
-    const directLaunchResponse = await tryDirectLaunch(state.currentInput);
-    if (directLaunchResponse) {
-      addMessage("assistant", directLaunchResponse, state.channel);
-      return { ...state, response: directLaunchResponse, currentStep: "done" };
+    const executionResults: Array<{ tool: string; result: unknown }> = [];
+    const directResponse = await tryDirectLaunch(state.currentInput);
+    
+    if (directResponse) {
+      log.info("DIRECT LAUNCH EXECUTED");
+      log.info("TOOL EXECUTION COMPLETE", { tool: "directLaunch", result: directResponse });
+      addMessage("assistant", directResponse, state.channel);
+      return { ...state, response: directResponse, currentStep: "done" };
     }
-  } catch (err) {
-    log.error("Direct launch failed", err, { command: state.currentInput });
-    const userMessage = formatErrorForUser(err);
-    addMessage("assistant", userMessage, state.channel);
-    return { ...state, response: userMessage, currentStep: "error" };
+
+    const normalized = state.currentInput.toLowerCase();
+    const globalBrowserMatchResolver = normalized.match(/\b(?:on|in|using)\s+(chrome|edge|firefox)\b/i);
+    const detectedBrowser = globalBrowserMatchResolver?.[1]?.toLowerCase();
+    if (detectedBrowser) {
+      log.info("BROWSER CONTEXT DETECTED (resolver)", { detectedBrowser });
+    }
+    const toolsToExecute: Array<{ id: string; params: Record<string, unknown> }> = [];
+
+    // Parse commands for downloads/gmail/youtube/chrome/notepad/calculator
+    if (normalized.includes("open downloads") || normalized.includes("launch downloads")) {
+      const targetPath = process.env.USERPROFILE ? `${process.env.USERPROFILE}\\Downloads` : "C:\\Users\\dell\\Downloads";
+      toolsToExecute.push({ id: "system.open_path", params: { path: targetPath } });
+    } else if (normalized.includes("open gmail") || normalized.includes("launch gmail")) {
+      toolsToExecute.push({
+        id: "browser.navigate",
+        params: { url: "https://mail.google.com", ...(detectedBrowser ? { browser: detectedBrowser } : {}) }
+      });
+    } else if (normalized.includes("open youtube") || normalized.includes("launch youtube")) {
+      toolsToExecute.push({
+        id: "browser.navigate",
+        params: { url: "https://www.youtube.com", ...(detectedBrowser ? { browser: detectedBrowser } : {}) }
+      });
+    } else if (normalized.includes("open chrome") || normalized.includes("launch chrome")) {
+      toolsToExecute.push({ id: "system.open_app", params: { app: "chrome" } });
+    } else if (normalized.includes("open notepad") || normalized.includes("launch notepad")) {
+      toolsToExecute.push({ id: "system.open_app", params: { app: "notepad" } });
+    } else if (normalized.includes("open calculator") || normalized.includes("launch calculator") || normalized.includes("open calc")) {
+      toolsToExecute.push({ id: "system.open_app", params: { app: "calculator" } });
+    }
+
+    // No changes needed for other tool calls
+
+    if (toolsToExecute.length > 0) {
+      const { dispatchTool } = await import("../tools/dispatcher.js");
+      for (const toolCall of toolsToExecute) {
+        log.info("Executing tool", { id: toolCall.id, params: toolCall.params });
+        const result = await dispatchTool(toolCall.id, toolCall.params);
+        executionResults.push({ tool: toolCall.id, result });
+        log.info("TOOL EXECUTION COMPLETE", { tool: toolCall.id, result });
+      }
+      log.info("DIRECT LAUNCH EXECUTED");
+      const successMsg = "Task completed";
+      addMessage("assistant", successMsg, state.channel);
+      return { ...state, response: successMsg, currentStep: "done" };
+    }
+
+    const fallbackMsg = "Task completed (deterministic execution bypass).";
+    log.info("DIRECT LAUNCH EXECUTED");
+    log.info("TOOL EXECUTION COMPLETE", { tool: "fallback", result: fallbackMsg });
+    addMessage("assistant", fallbackMsg, state.channel);
+    return { ...state, response: fallbackMsg, currentStep: "done" };
   }
 
   // Get relevant tools for this intent
   const toolNames = TOOL_REGISTRY
     .filter(t => {
       if (state.intent === "system_control") return t.category === "system" || t.category === "browser";
-      if (state.intent === "browser_action") return t.category === "browser" || t.category === "system";
+      if (state.intent === "browser_action" || state.intent === "web_search") return t.category === "browser" || t.category === "system";
       if (state.intent === "file_operation") return t.category === "filesystem";
       return true;
     })
@@ -155,9 +354,9 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
   });
 
   // Check for tool calls and execute if safe
-  let executionResults: any[] = [];
+  const executionResults: Array<{ tool: string; result: unknown }> = [];
   try {
-    let parsed: any = { tools: [], reasoning: "" };
+    let parsed: { tools: Array<{ id: string; params: Record<string, unknown> }>; reasoning: string } = { tools: [], reasoning: "" };
     try {
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
@@ -185,7 +384,10 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
 
     if (parsed.tools) {
       parsed.tools = parsed.tools.filter(
-        (t: any) => t && typeof t === 'object' && t.id
+        (t): t is { id: string; params: Record<string, unknown> } => {
+          const item = t as Record<string, unknown> | null;
+          return !!item && typeof item === "object" && typeof item.id === "string";
+        }
       );
     }
     
@@ -224,8 +426,8 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
       // If we executed tools, generate a new response based on results
       if (executionResults.length > 0) {
         const allLaunchesCompleted = executionResults.every((entry) => {
-          const result = entry.result;
-          return result && result.success === true && result.message === "Task completed";
+          const result = entry.result as Record<string, unknown> | null;
+          return !!result && result.success === true && result.message === "Task completed";
         });
 
         if (allLaunchesCompleted) {

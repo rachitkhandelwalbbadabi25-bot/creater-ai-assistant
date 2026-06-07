@@ -85,7 +85,7 @@ export async function retrieveContext(
 
   // ── 5. Graph: entity-based relational search ────────────────────────────────
   const entities = extractEntities(query);
-  let graphNodes = searchGraph(query, 5); // Start with full query match
+  const graphNodes = searchGraph(query, 5); // Start with full query match
 
   // Search by extracted entities (names, tech, places)
   for (const ent of entities) {

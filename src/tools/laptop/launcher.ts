@@ -90,34 +90,74 @@ function matchWindowsApp(command: string): { matchedApp: string; resolvedPath: s
 
 async function runWindowsOpen(target: string, kind: LaunchKind): Promise<void> {
   launchTrace("src/tools/laptop/launcher.ts", "runWindowsOpen", target);
-  const escapedTarget = target.replace(/'/g, "''");
-  const script = kind === "file" || kind === "directory"
-    ? `Invoke-Item -LiteralPath '${escapedTarget}'`
-    : `Start-Process -FilePath '${escapedTarget}'`;
+  
+  if (kind === "url" || kind === "app" || kind === "file") {
+    if (kind === "url") {
+      log.info("WINDOWS URL OPEN DETECTED", { target });
+      log.info("WINDOWS URL PROCESS SPAWNED", { target });
+    } else if (kind === "app") {
+      log.info("WINDOWS APP OPEN DETECTED", { target });
+      log.info("WINDOWS APP PROCESS SPAWNED", { target });
+    } else {
+      log.info("WINDOWS FILE OPEN DETECTED", { target });
+    }
 
-  const proc = Bun.spawn({
-    cmd: [
-      "powershell.exe",
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-Command",
-      script
-    ],
-    stdout: "pipe",
-    stderr: "pipe",
-    windowsHide: true,
-  });
+    const proc = Bun.spawn({
+      cmd: ["cmd.exe", "/c", "start", "", target],
+      stdout: "pipe",
+      stderr: "pipe",
+      windowsHide: true,
+    });
 
-  const [exitCode, stdout, stderr] = await Promise.all([
-    proc.exited,
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
+    const [exitCode, stdout, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
 
-  if (exitCode !== 0) {
-    throw new Error(`Windows open failed with exit code ${exitCode}: ${stderr.trim() || stdout.trim() || "no stderr"}`);
+    if (exitCode !== 0) {
+      throw new Error(`Windows open failed with exit code ${exitCode}: ${stderr.trim() || stdout.trim() || "no stderr"}`);
+    }
+
+    if (kind === "url") {
+      log.info("WINDOWS URL OPEN SUCCESS", { target });
+    } else if (kind === "app") {
+      log.info("WINDOWS APP OPEN SUCCESS", { target });
+    } else {
+      log.info("WINDOWS FILE OPEN SUCCESS", { target });
+    }
+    return;
+  }
+
+  if (kind === "directory") {
+    log.info("WINDOWS FOLDER OPEN DETECTED", { target });
+    const script = "param([string]$Target) explorer.exe $Target";
+    const proc = Bun.spawn({
+      cmd: [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        script,
+        target,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+      windowsHide: true,
+    });
+
+    const [exitCode, stdout, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+
+    if (exitCode !== 0) {
+      throw new Error(`Windows open failed with exit code ${exitCode}: ${stderr.trim() || stdout.trim() || "no stderr"}`);
+    }
+    log.info("WINDOWS FOLDER OPEN SUCCESS", { target });
   }
 }
 
@@ -214,4 +254,49 @@ export async function openFileOrPath(targetPath: string): Promise<LaunchResult> 
 export async function openUrl(targetUrl: string): Promise<LaunchResult> {
   launchTrace("src/tools/laptop/launcher.ts", "openUrl", targetUrl);
   return openLaunchTarget(targetUrl);
+}
+
+/**
+ * Open a URL in a specific browser (chrome, edge, firefox) on Windows.
+ * Falls back to default openUrl on non-Windows platforms or unknown browsers.
+ */
+export async function openUrlInBrowser(browser: string, targetUrl: string): Promise<LaunchResult> {
+  launchTrace("src/tools/laptop/launcher.ts", "openUrlInBrowser", { browser, targetUrl });
+  const normalizedBrowser = browser.toLowerCase();
+  const browserMap: Record<string, string> = {
+    chrome: "chrome.exe",
+    edge: "msedge.exe",
+    firefox: "firefox.exe",
+  };
+  const exe = browserMap[normalizedBrowser];
+  if (!exe) {
+    // Fallback to default URL opening
+    return openUrl(targetUrl);
+  }
+  if (process.platform === "win32") {
+    const proc = Bun.spawn({
+      cmd: [exe, targetUrl],
+      stdout: "pipe",
+      stderr: "pipe",
+      windowsHide: true,
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    if (exitCode !== 0) {
+      throw new Error(`Failed to open URL in ${browser}: ${stderr.trim() || stdout.trim()}`);
+    }
+    log.info(`Opened URL in ${browser}`, { targetUrl });
+    return {
+      success: true,
+      kind: "url",
+      receivedCommand: targetUrl,
+      resolvedPath: targetUrl,
+      message: "Task completed",
+    };
+  }
+  // Non-windows fallback
+  return openUrl(targetUrl);
 }

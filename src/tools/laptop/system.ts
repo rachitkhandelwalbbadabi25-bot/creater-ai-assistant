@@ -2,7 +2,7 @@
 // src/tools/laptop/system.ts — System info: CPU, RAM, battery, processes, etc.
 // ════════════════════════════════════════════════════════════════════════════════
 
-import si from "systeminformation";
+// NOTE: systeminformation is imported dynamically to avoid static bundler resolution on non‑Windows platforms
 import { createLogger } from "@utils/logger.js";
 import { formatBytes } from "@utils/helpers.js";
 
@@ -18,6 +18,8 @@ export interface SystemSnapshot {
 }
 
 export async function getSystemInfo(): Promise<SystemSnapshot> {
+  // Dynamic import only when needed
+  const si = (await import("systeminformation")).default;
   log.tool("Fetching system info");
 
   const [cpu, cpuLoad, mem, battery, disk, osInfo, time] = await Promise.all([
@@ -61,6 +63,7 @@ export async function getSystemInfo(): Promise<SystemSnapshot> {
 }
 
 export async function getProcesses(topN = 10): Promise<Array<{ name: string; cpu: number; mem: number; pid: number }>> {
+  const si = (await import("systeminformation")).default;
   const procs = await si.processes();
   return procs.list
     .sort((a, b) => b.cpu - a.cpu)
@@ -69,6 +72,7 @@ export async function getProcesses(topN = 10): Promise<Array<{ name: string; cpu
 }
 
 export async function getBatteryStatus(): Promise<string> {
+  const si = (await import("systeminformation")).default;
   const bat = await si.battery();
   if (!bat.hasBattery) return "No battery (desktop)";
   return `${bat.percent}% ${bat.isCharging ? "⚡ charging" : "🔋 on battery"}`;

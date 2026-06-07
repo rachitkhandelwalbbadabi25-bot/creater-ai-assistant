@@ -74,7 +74,7 @@ function cleanupDiagnostics(diagnostics: BrowserDiagnostics | null | undefined):
   for (const target of [diagnostics.tempProfileDir, diagnostics.downloadsPath]) {
     try {
       rmSync(target, { recursive: true, force: true });
-    } catch {}
+    } catch (error) { workerLog('Failed to clean up diagnostics', { error: error instanceof Error ? error.message : String(error) }); }
   }
 }
 
@@ -309,7 +309,7 @@ async function testRawBrowserLaunchInternal(): Promise<ToolResult> {
         durationMs: Date.now() - attemptStartedAt,
         error: error instanceof Error ? error.message : String(error),
       });
-      await closeWorkerBrowser().catch(() => undefined);
+      await closeWorkerBrowser().catch((error) => workerLog('Failed to close browser in raw launch test', { error: error instanceof Error ? error.message : String(error) }));
     }
   }
 

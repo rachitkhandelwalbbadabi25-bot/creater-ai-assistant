@@ -1,17 +1,21 @@
-// src/graph/supervisor.ts - Main orchestrator: routes to agents, manages flow
-// This is the entry point for processing any user message.
-
 import { createInitialState, type GraphState } from "./state.js";
 import { taskAgentNode } from "./taskAgent.js";
 import { emotionAgentNode } from "./emotionAgent.js";
 import { laptopAgentNode } from "./laptopAgent.js";
 import { projectAgentNode } from "./projectAgent.js";
 import { skillAgentNode } from "./skillAgent.js";
-import { classifyRuntimeMode } from "../runtime/RuntimeModeClassifier.js";
+
 import { createLogger } from "@utils/logger.js";
 import { formatErrorForUser } from "@utils/errorHandler.js";
+import { classifyRuntimeMode } from "../runtime/RuntimeModeClassifier.js";
+
+// Memory observability
+import { logMemorySnapshot } from "@utils/memory.js";
 
 const log = createLogger("graph/supervisor");
+
+// Simple workflow counter for periodic memory snapshots
+let workflowCount = 0;
 
 type AgentNode = (state: GraphState) => Promise<GraphState>;
 
@@ -30,7 +34,7 @@ async function routeConversationalState(state: GraphState): Promise<GraphState> 
 
 async function routeExecutionState(
   state: GraphState,
-  input: string
+  input: string,
 ): Promise<{ state: GraphState; bypassedExecution: boolean }> {
   const runtimeClassification = classifyRuntimeMode(input);
   console.log("RUNTIME MODE CLASSIFIER ACTIVE");
@@ -41,6 +45,13 @@ async function routeExecutionState(
     console.log("DIRECT EXECUTION ROUTE ACTIVE");
     console.log("EXECUTION BYPASS CONFIRMED");
     console.log("CONVERSATIONAL PIPELINE SKIPPED");
+    if (runtimeClassification.intent === "web_search" || runtimeClassification.intent === "web_navigation") {
+      console.log("EXECUTION SEARCH BYPASS ACTIVE");
+      log.info("Execution intent bypassing conversational routing", {
+        intent: runtimeClassification.intent,
+        targetAgent: runtimeClassification.targetAgent,
+      });
+    }
 
     return {
       state: await laptopAgentNode({
@@ -66,13 +77,19 @@ async function routeExecutionState(
 export async function processMessageStreaming(
   input: string,
   channel: GraphState["channel"] = "tui",
-  onToken?: (token: string) => void
+  onToken?: (token: string) => void,
 ): Promise<string> {
   const startTime = Date.now();
   log.info("STREAMING MODE ACTIVE");
 
+  // Memory snapshot at start of workflow
+  workflowCount++;
+  log.info(`Workflow #${workflowCount} started`);
+  logMemorySnapshot(`Workflow ${workflowCount} start`);
+
+  let state: GraphState | undefined;
   try {
-    let state = createInitialState(input, channel);
+    state = createInitialState(input, channel);
     state.onToken = onToken;
     log.info(`Processing (stream): "${input.slice(0, 80)}..." [${channel}]`);
 
@@ -101,18 +118,36 @@ export async function processMessageStreaming(
       mood: state.mood,
       responseLen: state.response.length,
     });
+
+    // End of workflow memory snapshot
+    logMemorySnapshot(`Workflow ${workflowCount} end`);
+    if (workflowCount % 5 === 0) {
+      log.info(`Periodic memory snapshot after ${workflowCount} workflows`);
+      logMemorySnapshot(`Periodic snapshot at ${workflowCount} workflows`);
+    }
+
     return state.response;
   } catch (error) {
     log.error("Streaming pipeline error", error);
     return formatErrorForUser(error);
+  } finally {
+    if (state) {
+      state.onToken = undefined;
+    }
+    log.info("STREAMING CLEANUP: token handler cleared");
   }
 }
 
 export async function processMessage(
   input: string,
-  channel: GraphState["channel"] = "tui"
+  channel: GraphState["channel"] = "tui",
 ): Promise<string> {
   const startTime = Date.now();
+
+  // Memory snapshot at start of workflow
+  workflowCount++;
+  log.info(`Workflow #${workflowCount} started`);
+  logMemorySnapshot(`Workflow ${workflowCount} start`);
 
   try {
     let state = createInitialState(input, channel);
@@ -143,17 +178,27 @@ export async function processMessage(
       mood: state.mood,
       responseLen: state.response.length,
     });
+
+    // End of workflow memory snapshot
+    logMemorySnapshot(`Workflow ${workflowCount} end`);
+    if (workflowCount % 5 === 0) {
+      log.info(`Periodic memory snapshot after ${workflowCount} workflows`);
+      logMemorySnapshot(`Periodic snapshot at ${workflowCount} workflows`);
+    }
+
     return state.response;
   } catch (error) {
     log.error("Pipeline error", error);
     return formatErrorForUser(error);
+  } finally {
+    // No token handler in non‑streaming path, nothing to clear
   }
 }
 
 export async function processConfirmation(
   confirmed: boolean,
   pendingToolId: string,
-  pendingParams: Record<string, unknown>
+  pendingParams: Record<string, unknown>,
 ): Promise<string> {
   if (!confirmed) {
     return "👍 Theek hai, cancel kar diya. Kuch aur chahiye?";

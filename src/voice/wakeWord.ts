@@ -42,7 +42,7 @@ export async function startWakeWordDetection(onWake: () => void) {
   try {
     isRunning = true;
     // 1. Initialize Porcupine
-    let keywords: string[] = [];
+    const keywords: string[] = [];
 
     if (env.PICOVOICE_KEYWORD_PATH && env.PICOVOICE_KEYWORD_PATH.trim() !== "") {
       log.info(`Using custom wake word from: ${env.PICOVOICE_KEYWORD_PATH}`);

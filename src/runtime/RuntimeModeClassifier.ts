@@ -19,7 +19,7 @@ export interface RuntimeModeClassification {
   reason: string;
   detectedModes: RuntimeMode[];
   targetAgent?: "laptopAgent";
-  intent?: "system_command" | "browser_command" | "application_launch" | "web_navigation";
+  intent?: "system_command" | "browser_command" | "application_launch" | "web_navigation" | "web_search";
   selectedModel?: string;
 }
 
@@ -35,7 +35,7 @@ const EXECUTION_KEYWORDS = [
   /^(open|launch|start|run)\s+/i,
   /^(search|google|search google|find on google)\s+/i,
   /^(shutdown|restart|reboot|sleep|lock|sign out|log out)\b/i,
-  /^(screenshot|take screenshot|capture screen)\b/i,
+  /^(screenshot|screenshort|screen\s+shot|capture\s+screen|take\s+screenshot|take\s+a\s+screenshot|ss)\b/i,
   /^(volume up|volume down|mute|unmute|toggle mute|increase volume|decrease volume)\b/i,
   /\bopen settings\b/i,
   /\bplay music on youtube\b/i,
@@ -72,12 +72,37 @@ const CONVERSATIONAL_KEYWORDS = [
   /\bwhat do you think\b/i,
 ];
 
+const DETERMINISTIC_SEARCH_PATTERNS = [
+  /^open\s+.+\s+and\s+search\s+.+$/i,
+  /^search\s+.+\s+on\s+google$/i,
+  /^search\s+.+\s+on\s+youtube$/i,
+];
+
 function isHybridExecutionRequest(normalizedInput: string): boolean {
   return (
     /\band\b/i.test(normalizedInput) &&
     /(\bopen\b|\blaunch\b|\bplay\b|\bsearch\b|\bgoogle\b)/i.test(normalizedInput) &&
     /(\bsearch\b|\bgoogle\b|\bexplain\b|\bcompare\b|\bfind\b|\bteach\b|\bsummarize\b)/i.test(normalizedInput)
   );
+}
+
+function detectDeterministicSearchIntent(normalizedInput: string): RuntimeModeClassification | null {
+  if (!DETERMINISTIC_SEARCH_PATTERNS.some((pattern) => pattern.test(normalizedInput))) {
+    return null;
+  }
+
+  log.info("DETERMINISTIC SEARCH WORKFLOW DETECTED", { input: normalizedInput });
+
+  return {
+    mode: "execution",
+    normalizedInput,
+    confidence: 0.99,
+    reason: "deterministic-web-search",
+    detectedModes: ["execution"],
+    targetAgent: "laptopAgent",
+    intent: "web_search",
+    selectedModel: Models.FAST,
+  };
 }
 
 function detectExecutionIntent(normalizedInput: string): RuntimeModeClassification | null {
@@ -105,26 +130,31 @@ function detectExecutionIntent(normalizedInput: string): RuntimeModeClassificati
     };
   }
 
-  const matchedExecutionKeyword = EXECUTION_KEYWORDS.find((pattern) => pattern.test(normalizedInput));
-  if (!matchedExecutionKeyword) return null;
+  if (EXECUTION_KEYWORDS.some((pattern) => pattern.test(normalizedInput))) {
+    if (/screenshot|screenshort|screen\s+shot|capture\s+screen|take\s+screenshot|take\s+a\s+screenshot|ss/i.test(normalizedInput)) {
+      log.info("SCREENSHOT EXECUTION INTENT DETECTED", { input: normalizedInput });
+    }
 
-  const intent =
-    /\b(youtube|browser|google|search|website|url|music)\b/i.test(normalizedInput)
-      ? "web_navigation"
-      : /\b(notepad|calculator|calc|chrome|edge|firefox|vscode|settings)\b/i.test(normalizedInput)
-        ? "application_launch"
-        : "system_command";
+    const intent =
+      /\b(youtube|browser|google|search|website|url|music)\b/i.test(normalizedInput)
+        ? "web_navigation"
+        : /\b(notepad|calculator|calc|chrome|edge|firefox|vscode|settings)\b/i.test(normalizedInput)
+          ? "application_launch"
+          : "system_command";
 
-  return {
-    mode: "execution",
-    normalizedInput,
-    confidence: 0.97,
-    reason: `execution-pattern:${matchedExecutionKeyword.source}`,
-    detectedModes: ["execution"],
-    targetAgent: "laptopAgent",
-    intent,
-    selectedModel: Models.FAST,
-  };
+    return {
+      mode: "execution",
+      normalizedInput,
+      confidence: 0.97,
+      reason: "execution-pattern",
+      detectedModes: ["execution"],
+      targetAgent: "laptopAgent",
+      intent,
+      selectedModel: Models.FAST,
+    };
+  }
+
+  return null;
 }
 
 export function classifyRuntimeMode(input: string): RuntimeModeClassification {
@@ -132,6 +162,14 @@ export function classifyRuntimeMode(input: string): RuntimeModeClassification {
   console.log("RUNTIME MODE CLASSIFIER ACTIVE");
   console.log("INPUT NORMALIZED", normalizedInput);
   log.info("Classifying runtime mode", { input, normalizedInput });
+
+  const deterministicSearch = detectDeterministicSearchIntent(normalizedInput);
+  if (deterministicSearch) {
+    log.info("Runtime mode detected", { classification: deterministicSearch });
+    console.log("RUNTIME MODE DETECTED", deterministicSearch);
+    console.log("EXECUTION SEARCH BYPASS ACTIVE");
+    return deterministicSearch;
+  }
 
   const hasExecution = detectExecutionIntent(normalizedInput);
   const hasRetrieval = RETRIEVAL_KEYWORDS.some((pattern) => pattern.test(normalizedInput));

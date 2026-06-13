@@ -2,6 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { ToolError } from "@utils/errorHandler.js";
 import { createLogger } from "@utils/logger.js";
+import { IS_RUNTIME_DEBUG, logPerf, nowMs } from "@utils/perf.js";
 
 const log = createLogger("tools/launcher");
 
@@ -40,6 +41,21 @@ const WINDOWS_APPS: AppDefinition[] = [
   { names: ["excel", "microsoft excel"], command: "excel.exe" },
   { names: ["powerpoint", "microsoft powerpoint"], command: "powerpnt.exe" },
 ];
+
+const WINDOWS_BROWSER_PATHS: Record<string, string[]> = {
+  chrome: [
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  ],
+  edge: [
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+  ],
+  firefox: [
+    "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+    "C:\\Program Files (x86)\\Mozilla Firefox\\firefox.exe",
+  ],
+};
 
 const URL_PATTERN = /^[a-z][a-z0-9+.-]*:\/\//i;
 const INVALID_TARGETS = new Set(["", "\\", "\\\\", "/", "\"\"", "''"]);
@@ -88,49 +104,80 @@ function matchWindowsApp(command: string): { matchedApp: string; resolvedPath: s
   };
 }
 
+function resolveBrowserExecutable(browser: string): string {
+  const normalizedBrowser = browser.toLowerCase();
+  const candidates = WINDOWS_BROWSER_PATHS[normalizedBrowser];
+
+  if (IS_RUNTIME_DEBUG) {
+    log.info("BROWSER EXECUTABLE RESOLUTION STARTED", { browser: normalizedBrowser, candidates });
+  }
+
+  if (!candidates?.length) {
+    log.warn("BROWSER EXECUTABLE NOT FOUND", { browser: normalizedBrowser, reason: "unsupported-browser" });
+    throw new Error(`Unsupported browser: ${browser}`);
+  }
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      if (IS_RUNTIME_DEBUG) {
+        log.info("BROWSER EXECUTABLE FOUND", {
+          browser: normalizedBrowser,
+          executable: candidate,
+        });
+      }
+      return candidate;
+    }
+  }
+
+  log.warn("BROWSER EXECUTABLE NOT FOUND", { browser: normalizedBrowser, candidates });
+  throw new Error(`Browser executable not found for ${browser}`);
+}
+
 async function runWindowsOpen(target: string, kind: LaunchKind): Promise<void> {
   launchTrace("src/tools/laptop/launcher.ts", "runWindowsOpen", target);
+  const startedAt = nowMs();
   
   if (kind === "url" || kind === "app" || kind === "file") {
-    if (kind === "url") {
+    if (IS_RUNTIME_DEBUG && kind === "url") {
       log.info("WINDOWS URL OPEN DETECTED", { target });
       log.info("WINDOWS URL PROCESS SPAWNED", { target });
-    } else if (kind === "app") {
+    } else if (IS_RUNTIME_DEBUG && kind === "app") {
       log.info("WINDOWS APP OPEN DETECTED", { target });
       log.info("WINDOWS APP PROCESS SPAWNED", { target });
-    } else {
+    } else if (IS_RUNTIME_DEBUG) {
       log.info("WINDOWS FILE OPEN DETECTED", { target });
     }
 
     const proc = Bun.spawn({
       cmd: ["cmd.exe", "/c", "start", "", target],
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "ignore",
+      stderr: "ignore",
       windowsHide: true,
     });
 
-    const [exitCode, stdout, stderr] = await Promise.all([
-      proc.exited,
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
+    const exitCode = await proc.exited;
 
     if (exitCode !== 0) {
-      throw new Error(`Windows open failed with exit code ${exitCode}: ${stderr.trim() || stdout.trim() || "no stderr"}`);
+      throw new Error(`Windows open failed with exit code ${exitCode}`);
     }
 
-    if (kind === "url") {
-      log.info("WINDOWS URL OPEN SUCCESS", { target });
-    } else if (kind === "app") {
-      log.info("WINDOWS APP OPEN SUCCESS", { target });
-    } else {
-      log.info("WINDOWS FILE OPEN SUCCESS", { target });
+    if (IS_RUNTIME_DEBUG) {
+      if (kind === "url") {
+        log.info("WINDOWS URL OPEN SUCCESS", { target });
+      } else if (kind === "app") {
+        log.info("WINDOWS APP OPEN SUCCESS", { target });
+      } else {
+        log.info("WINDOWS FILE OPEN SUCCESS", { target });
+      }
     }
+    logPerf(log, "runWindowsOpen completed", startedAt, { kind });
     return;
   }
 
   if (kind === "directory") {
-    log.info("WINDOWS FOLDER OPEN DETECTED", { target });
+    if (IS_RUNTIME_DEBUG) {
+      log.info("WINDOWS FOLDER OPEN DETECTED", { target });
+    }
     const script = "param([string]$Target) explorer.exe $Target";
     const proc = Bun.spawn({
       cmd: [
@@ -157,7 +204,10 @@ async function runWindowsOpen(target: string, kind: LaunchKind): Promise<void> {
     if (exitCode !== 0) {
       throw new Error(`Windows open failed with exit code ${exitCode}: ${stderr.trim() || stdout.trim() || "no stderr"}`);
     }
-    log.info("WINDOWS FOLDER OPEN SUCCESS", { target });
+    if (IS_RUNTIME_DEBUG) {
+      log.info("WINDOWS FOLDER OPEN SUCCESS", { target });
+    }
+    logPerf(log, "runWindowsOpen completed", startedAt, { kind });
   }
 }
 
@@ -188,7 +238,9 @@ async function runCrossPlatformOpen(target: string, kind: LaunchKind): Promise<v
 export function resolveLaunchTarget(command: string): Omit<LaunchResult, "success" | "message"> {
   launchTrace("src/tools/laptop/launcher.ts", "resolveLaunchTarget", command);
   const receivedCommand = normalizeInput(command, "command");
-  log.info("Received launch command", { receivedCommand });
+  if (IS_RUNTIME_DEBUG) {
+    log.info("Received launch command", { receivedCommand });
+  }
 
   if (URL_PATTERN.test(receivedCommand)) {
     return {
@@ -224,12 +276,18 @@ export function resolveLaunchTarget(command: string): Omit<LaunchResult, "succes
 
 export async function openLaunchTarget(command: string): Promise<LaunchResult> {
   launchTrace("src/tools/laptop/launcher.ts", "openLaunchTarget", command);
+  const startedAt = nowMs();
   const resolved = resolveLaunchTarget(command);
-  log.info("Resolved launch target", resolved);
+  if (IS_RUNTIME_DEBUG) {
+    log.info("Resolved launch target", resolved);
+  }
 
   try {
     await runCrossPlatformOpen(resolved.resolvedPath, resolved.kind);
-    log.info("Opened successfully", resolved);
+    if (IS_RUNTIME_DEBUG) {
+      log.info("Opened successfully", resolved);
+    }
+    logPerf(log, "openLaunchTarget completed", startedAt, { kind: resolved.kind });
     return {
       success: true,
       ...resolved,
@@ -262,18 +320,20 @@ export async function openUrl(targetUrl: string): Promise<LaunchResult> {
  */
 export async function openUrlInBrowser(browser: string, targetUrl: string): Promise<LaunchResult> {
   launchTrace("src/tools/laptop/launcher.ts", "openUrlInBrowser", { browser, targetUrl });
-  const normalizedBrowser = browser.toLowerCase();
-  const browserMap: Record<string, string> = {
-    chrome: "chrome.exe",
-    edge: "msedge.exe",
-    firefox: "firefox.exe",
-  };
-  const exe = browserMap[normalizedBrowser];
-  if (!exe) {
-    // Fallback to default URL opening
-    return openUrl(targetUrl);
-  }
+  const startedAt = nowMs();
   if (process.platform === "win32") {
+    let exe: string;
+    try {
+      exe = resolveBrowserExecutable(browser);
+    } catch (error) {
+      log.warn("BROWSER EXECUTABLE NOT FOUND", {
+        browser,
+        targetUrl,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return openUrl(targetUrl);
+    }
+
     const proc = Bun.spawn({
       cmd: [exe, targetUrl],
       stdout: "pipe",
@@ -288,7 +348,10 @@ export async function openUrlInBrowser(browser: string, targetUrl: string): Prom
     if (exitCode !== 0) {
       throw new Error(`Failed to open URL in ${browser}: ${stderr.trim() || stdout.trim()}`);
     }
-    log.info(`Opened URL in ${browser}`, { targetUrl });
+    if (IS_RUNTIME_DEBUG) {
+      log.info(`Opened URL in ${browser}`, { targetUrl, executable: exe });
+    }
+    logPerf(log, "openUrlInBrowser completed", startedAt, { browser });
     return {
       success: true,
       kind: "url",

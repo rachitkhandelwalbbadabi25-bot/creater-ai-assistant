@@ -88,9 +88,9 @@ export async function executePlannedTools(toolCalls: ValidatedToolCall[]) {
     const result = await executeValidatedToolCall(call);
     results.push({
       toolId: call.id,
-      result,
-      success: result.success === true,
-      verified: result.verified === true,
+      result: result as ToolResult,
+      success: (result as any)?.success === true,
+      verified: (result as any)?.verified === true,
     });
   }
   return results;

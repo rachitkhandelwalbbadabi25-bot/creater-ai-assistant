@@ -1,4 +1,6 @@
-import type { GraphState } from "./state.js";
+import { IntentEnum } from "../runtime/semantic/semanticTypes.js";
+import { normalizeIntent } from "../runtime/semantic/intentDetector.js";
+import { type GraphState } from "./state.js";
 import { Models } from "@config/models.js";
 import { routeRequest } from "@llm/router.js";
 import { detectEmotion } from "@emotion/detector.js";
@@ -11,12 +13,13 @@ const log = createLogger("graph/router");
 
 function shouldBypassConversationalRouting(state: GraphState): boolean {
   return (
+    state.allowConversationalFallback === false ||
     state.currentStep === "executing" ||
     state.intent === "system_control" ||
     state.intent === "browser_action" ||
     state.intent === "file_operation" ||
     state.intent === "web_navigation" ||
-    state.intent === "web_search"
+    state.intent === IntentEnum.BROWSER_SEARCH
   );
 }
 
@@ -62,7 +65,7 @@ export async function routerNode(state: GraphState): Promise<GraphState> {
     const route = routeResult.value;
     return {
       ...state,
-      intent: route.intent.intent,
+      intent: normalizeIntent(route.intent.intent),
       intentConfidence: route.intent.confidence,
       targetAgent: route.agent,
       selectedModel: route.model,
@@ -78,7 +81,7 @@ export async function routerNode(state: GraphState): Promise<GraphState> {
   log.warn("Routing failed - falling back to taskAgent");
   return {
     ...state,
-    intent: "unknown",
+    intent: IntentEnum.UNKNOWN,
     intentConfidence: 0,
     targetAgent: "taskAgent",
     selectedModel: Models.PRIMARY,

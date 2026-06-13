@@ -28,6 +28,13 @@ export interface GraphState {
   intentConfidence: number;
   targetAgent: string;
   selectedModel: string;
+  // Execution bypass flags – set when deterministic execution is detected
+  skipConversationPipeline: boolean;
+  skipEmotionPipeline: boolean;
+  skipSemanticRetrieval: boolean;
+  // New flag to explicitly disable any conversational fallback when in execution mode
+  allowConversationalFallback: boolean;
+  executionSource?: "alias" | "semantic-search" | "direct-launch" | "system-command";
 
   // ── Emotion ─────────────────────────────────────────────────────────────────
   mood: Mood;
@@ -67,6 +74,13 @@ export function createInitialState(
     mood: "neutral",
     energy: "medium",
     emotionConfidence: 0,
+    // execution bypass defaults
+    skipConversationPipeline: false,
+    skipEmotionPipeline: false,
+    skipSemanticRetrieval: false,
+    // disallow fallback by default
+    allowConversationalFallback: false,
+    executionSource: undefined,
     currentStep: "routing",
     plan: [],
     toolResults: [],

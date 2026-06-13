@@ -1,17 +1,8 @@
-// ════════════════════════════════════════════════════════════════════════════════
-// src/llm/client.ts — Unified LLM client for Ollama + Cloud providers
-//
-// Routing Priority:
-//   1. If model is an Ollama model → use Ollama
-//   2. If model is a cloud model → call cloud API with fallback to local
-//   3. On cloud failure → automatically fallback to OLLAMA_PRIMARY_MODEL
-// ════════════════════════════════════════════════════════════════════════════════
-
-import { chat as ollamaChat, chatStream as ollamaChatStream } from "./ollama.js";
-import { env } from "@config/index.js";
-import { AvailableModels, ProviderAvailability, getProviderForModel, type ModelProvider } from "@config/models.js";
-import { createLogger } from "@utils/logger.js";
 import type { ChatMessage } from "./ollama.js";
+import { env } from "@config/index.js";
+import { ProviderAvailability, getProviderForModel, type ModelProvider } from "@config/models.js";
+import { createLogger } from "@utils/logger.js";
+import { IS_RUNTIME_DEBUG } from "@utils/perf.js";
 
 const log = createLogger("llm/client");
 
@@ -24,17 +15,15 @@ export interface UnifiedChatOptions {
   format?: "json";
 }
 
-// ─── Provider Detection ─────────────────────────────────────────────────────────
 function getProvider(modelId: string): ModelProvider {
   return getProviderForModel(modelId);
 }
 
-// ─── OpenAI-Compatible Providers (OpenAI, Grok, DeepSeek) ───────────────────────
 async function callOpenAICompatible(
   opts: UnifiedChatOptions,
   baseUrl: string,
   apiKey: string,
-  providerName: string
+  providerName: string,
 ): Promise<string> {
   const body = {
     model: opts.model,
@@ -47,7 +36,7 @@ async function callOpenAICompatible(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(body),
   });
@@ -57,17 +46,16 @@ async function callOpenAICompatible(
     throw new Error(`${providerName} API error ${res.status}: ${err}`);
   }
 
-  const data = await res.json() as { choices: Array<{ message: { content: string } }> };
+  const data = (await res.json()) as { choices: Array<{ message: { content: string } }> };
   return data.choices[0]?.message?.content?.trim() ?? "";
 }
 
-// ─── Anthropic (Claude) ─────────────────────────────────────────────────────────
 async function callAnthropic(opts: UnifiedChatOptions): Promise<string> {
   const apiKey = env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
 
-  const system = opts.messages.find(m => m.role === "system")?.content ?? "";
-  const userMessages = opts.messages.filter(m => m.role !== "system");
+  const system = opts.messages.find((m) => m.role === "system")?.content ?? "";
+  const userMessages = opts.messages.filter((m) => m.role !== "system");
 
   const body = {
     model: opts.model,
@@ -92,22 +80,20 @@ async function callAnthropic(opts: UnifiedChatOptions): Promise<string> {
     throw new Error(`Anthropic API error ${res.status}: ${err}`);
   }
 
-  const data = await res.json() as { content: Array<{ type: string; text: string }> };
-  return data.content.map(c => c.text).join("").trim();
+  const data = (await res.json()) as { content: Array<{ type: string; text: string }> };
+  return data.content.map((c) => c.text).join("").trim();
 }
 
-// ─── Gemini ──────────────────────────────────────────────────────────────────────
 async function callGemini(opts: UnifiedChatOptions): Promise<string> {
   const apiKey = env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY not set");
 
-  // Convert messages to Gemini format
   const contents = opts.messages
-    .filter(m => m.role !== "system")
-    .map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
-  const systemText = opts.messages.find(m => m.role === "system")?.content;
+    .filter((m) => m.role !== "system")
+    .map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
+  const systemText = opts.messages.find((m) => m.role === "system")?.content;
 
-  const body: any = {
+  const body: Record<string, unknown> = {
     contents,
     generationConfig: {
       maxOutputTokens: opts.options?.num_predict ?? 4096,
@@ -124,7 +110,7 @@ async function callGemini(opts: UnifiedChatOptions): Promise<string> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    }
+    },
   );
 
   if (!res.ok) {
@@ -132,59 +118,52 @@ async function callGemini(opts: UnifiedChatOptions): Promise<string> {
     throw new Error(`Gemini API error ${res.status}: ${err}`);
   }
 
-  const data = await res.json() as {
+  const data = (await res.json()) as {
     candidates: Array<{ content: { parts: Array<{ text: string }> } }>;
   };
-  return data.candidates[0]?.content?.parts?.map(p => p.text).join("").trim() ?? "";
+  return data.candidates[0]?.content?.parts?.map((p) => p.text).join("").trim() ?? "";
 }
 
-// ─── Fallback to Local ───────────────────────────────────────────────────────────
 async function fallbackToLocal(opts: UnifiedChatOptions): Promise<string> {
   log.warn(`Falling back to local model: ${env.OLLAMA_PRIMARY_MODEL}`);
+  const { chat: ollamaChat } = await import("./ollama.js");
   return ollamaChat({ ...opts, model: env.OLLAMA_PRIMARY_MODEL });
 }
 
-// ─── Unified Chat ────────────────────────────────────────────────────────────────
-/**
- * Route a chat request to the correct provider.
- * Never logs API keys. Falls back to local on any cloud failure.
- */
 export async function chat(opts: UnifiedChatOptions): Promise<string> {
   const provider = getProvider(opts.model);
-  log.info(`Chat → provider: ${provider}, model: ${opts.model}`);
-  log.info("Prompt received", {
-    provider,
-    model: opts.model,
-    messageCount: opts.messages.length,
-    format: opts.format ?? "text",
-    lastMsg: opts.messages[opts.messages.length - 1]?.content.slice(0, 120),
-  });
+  if (IS_RUNTIME_DEBUG) {
+    log.info(`Chat -> provider: ${provider}, model: ${opts.model}`);
+    log.info("Prompt received", {
+      provider,
+      model: opts.model,
+      messageCount: opts.messages.length,
+      format: opts.format ?? "text",
+      lastMsg: opts.messages[opts.messages.length - 1]?.content.slice(0, 120),
+    });
+  }
 
   try {
     switch (provider) {
       case "anthropic":
         if (!ProviderAvailability.anthropic) throw new Error("Anthropic key not configured");
         return await callAnthropic(opts);
-
       case "openai":
         if (!ProviderAvailability.openai) throw new Error("OpenAI key not configured");
         return await callOpenAICompatible(opts, "https://api.openai.com/v1", env.OPENAI_API_KEY, "OpenAI");
-
       case "grok":
         if (!ProviderAvailability.grok) throw new Error("Grok key not configured");
         return await callOpenAICompatible(opts, "https://api.x.ai/v1", env.GROK_API_KEY, "Grok");
-
       case "deepseek":
         if (!ProviderAvailability.deepseek) throw new Error("DeepSeek key not configured");
         return await callOpenAICompatible(opts, "https://api.deepseek.com/v1", env.DEEPSEEK_API_KEY, "DeepSeek");
-
       case "gemini":
         if (!ProviderAvailability.gemini) throw new Error("Gemini key not configured");
         return await callGemini(opts);
-
-      default:
-        // Ollama
-        return await ollamaChat(opts as any);
+      default: {
+        const { chat: ollamaChat } = await import("./ollama.js");
+        return await ollamaChat(opts as never);
+      }
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -193,56 +172,59 @@ export async function chat(opts: UnifiedChatOptions): Promise<string> {
   }
 }
 
-/**
- * Streaming chat — streams from Ollama, or falls back gracefully for cloud models.
- * Cloud models produce a single response (streamed as one chunk via onToken).
- */
 export async function chatStream(
   opts: Omit<UnifiedChatOptions, "format">,
-  onToken: (token: string) => void
+  onToken: (token: string) => void,
 ): Promise<string> {
   const provider = getProvider(opts.model);
-  log.info("Prompt received", {
-    provider,
-    model: opts.model,
-    messageCount: opts.messages.length,
-    stream: true,
-    lastMsg: opts.messages[opts.messages.length - 1]?.content.slice(0, 120),
-  });
+  if (IS_RUNTIME_DEBUG) {
+    log.info("Prompt received", {
+      provider,
+      model: opts.model,
+      messageCount: opts.messages.length,
+      stream: true,
+      lastMsg: opts.messages[opts.messages.length - 1]?.content.slice(0, 120),
+    });
+  }
 
   if (provider === "ollama") {
     try {
-      return await ollamaChatStream(opts as any, onToken);
+      const { chatStream: ollamaChatStream } = await import("./ollama.js");
+      return await ollamaChatStream(opts as never, onToken);
     } catch (err) {
       log.error(`Local Ollama stream failed for model ${opts.model}: ${err}. Falling back to default model.`);
       const fallbackModel = env.DEFAULT_MODEL || "qwen2.5:3b";
       if (opts.model === fallbackModel) {
         throw err;
       }
-      return await ollamaChatStream({ ...opts, model: fallbackModel } as any, onToken);
+      const { chatStream: ollamaChatStream } = await import("./ollama.js");
+      return await ollamaChatStream({ ...opts, model: fallbackModel } as never, onToken);
     }
   }
 
-  // Cloud models: call non-streaming, emit full response as a single token chunk
   try {
     const response = await chat(opts);
     onToken(response);
-    log.info("Stream ended", {
-      provider,
-      model: opts.model,
-      stream: false,
-      outputChars: response.length,
-    });
+    if (IS_RUNTIME_DEBUG) {
+      log.info("Stream ended", {
+        provider,
+        model: opts.model,
+        stream: false,
+        outputChars: response.length,
+      });
+    }
     return response;
-  } catch (err) {
+  } catch {
     const local = await fallbackToLocal(opts);
     onToken(local);
-    log.info("Stream ended", {
-      provider,
-      model: opts.model,
-      stream: false,
-      outputChars: local.length,
-    });
+    if (IS_RUNTIME_DEBUG) {
+      log.info("Stream ended", {
+        provider,
+        model: opts.model,
+        stream: false,
+        outputChars: local.length,
+      });
+    }
     return local;
   }
 }

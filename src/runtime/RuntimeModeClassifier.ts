@@ -1,6 +1,24 @@
+import { IntentEnum } from "./semantic/semanticTypes.js";
 import { Models } from "@config/models.js";
 import { normalizeCommandInput, routeFastCommand } from "@graph/commandRouter.js";
 import { createLogger } from "@utils/logger.js";
+import { IS_RUNTIME_DEBUG, logPerf, nowMs } from "@utils/perf.js";
+import { extractQuery } from "./semantic/queryExtractor.js";
+import { determineExecutionMode } from "./semantic/semanticExecutionPolicy.js";
+
+export interface RuntimeModeClassification {
+  mode: RuntimeMode;
+  normalizedInput: string;
+  confidence: number;
+  reason: string;
+  detectedModes: RuntimeMode[];
+  executionMode?: "deterministic" | "validation" | "conversation";
+  intent?: "system_command" | "browser_command" | "application_launch" | "web_navigation" | IntentEnum.BROWSER_SEARCH;
+  selectedModel?: string;
+  executionSource?: "alias" | "semantic-search" | "direct-launch" | "system-command";
+  targetAgent?: string;
+}
+
 
 const log = createLogger("runtime/RuntimeModeClassifier");
 
@@ -12,16 +30,57 @@ export type RuntimeMode =
   | "orchestration"
   | "hybrid";
 
-export interface RuntimeModeClassification {
-  mode: RuntimeMode;
-  normalizedInput: string;
-  confidence: number;
-  reason: string;
-  detectedModes: RuntimeMode[];
-  targetAgent?: "laptopAgent";
-  intent?: "system_command" | "browser_command" | "application_launch" | "web_navigation" | "web_search";
-  selectedModel?: string;
-}
+// Duplicate RuntimeModeClassification removed; using earlier definition with IntentEnum.BROWSER_SEARCH
+
+const PRECOMPILED_REGEX = {
+  deterministicSearch: [
+    /^open\s+.+\s+and\s+search\s+.+$/i,
+    /^search\s+.+\s+on\s+google$/i,
+    /^search\s+.+\s+on\s+youtube$/i,
+  ],
+  executionKeywords: [
+    /^(open|launch|start|run|go to)\s+/i,
+    /^(search|google|search google|find on google|look up)\s+/i,
+    /^(shutdown|restart|reboot|sleep|lock|sign out|log out)\b/i,
+    /^(screenshot|screenshort|screen\s+shot|capture\s+screen|take\s+screenshot|take\s+a\s+screenshot|ss)\b/i,
+    /^(volume up|volume down|mute|unmute|toggle mute|increase volume|decrease volume)\b/i,
+    /\bopen settings\b/i,
+    /\bplay music on youtube\b/i,
+  ],
+  retrievalKeywords: [
+    /\bwhat did i say earlier\b/i,
+    /\bsummarize memory\b/i,
+    /\bfind my notes\b/i,
+    /\brecall previous tasks\b/i,
+    /\bremember\b.*\b(earlier|before|previous)\b/i,
+    /\bsearch memory\b/i,
+  ],
+  reasoningKeywords: [
+    /^(explain|analyze|analyse|compare|teach me|walk me through)\b/i,
+    /\bwhy\b.+\?/i,
+    /\bpros and cons\b/i,
+  ],
+  orchestrationKeywords: [
+    /\bautomate\b/i,
+    /\bschedule\b/i,
+    /\bworkflow\b/i,
+    /\bset up\b.+\b(reminder|monitor|automation)\b/i,
+    /\bkeep an eye on\b/i,
+  ],
+  conversationalKeywords: [
+    /^(hi|hello|hey|yo)\b/i,
+    /\bhow are you\b/i,
+    /\bi feel\b/i,
+    /\bcan we talk\b/i,
+    /\bwhat do you think\b/i,
+  ],
+  screenshot: /screenshot|screenshort|screen\s+shot|capture\s+screen|take\s+screenshot|take\s+a\s+screenshot|ss/i,
+  webNavigationIntent: /\b(youtube|browser|google|search|website|url|music)\b/i,
+  appLaunchIntent: /\b(notepad|calculator|calc|chrome|edge|firefox|vscode|settings)\b/i,
+  hybridAnd: /\band\b/i,
+  hybridExecution: /(\bopen\b|\blaunch\b|\bplay\b|\bsearch\b|\bgoogle\b)/i,
+  hybridMixed: /(\bsearch\b|\bgoogle\b|\bexplain\b|\bcompare\b|\bfind\b|\bteach\b|\bsummarize\b)/i,
+};
 
 export function isExecutionRuntimeMode(mode: RuntimeMode): boolean {
   return mode === "execution" || mode === "hybrid";
@@ -31,83 +90,69 @@ export function isConversationalRuntimeMode(mode: RuntimeMode): boolean {
   return mode === "conversational" || mode === "reasoning" || mode === "retrieval";
 }
 
-const EXECUTION_KEYWORDS = [
-  /^(open|launch|start|run)\s+/i,
-  /^(search|google|search google|find on google)\s+/i,
-  /^(shutdown|restart|reboot|sleep|lock|sign out|log out)\b/i,
-  /^(screenshot|screenshort|screen\s+shot|capture\s+screen|take\s+screenshot|take\s+a\s+screenshot|ss)\b/i,
-  /^(volume up|volume down|mute|unmute|toggle mute|increase volume|decrease volume)\b/i,
-  /\bopen settings\b/i,
-  /\bplay music on youtube\b/i,
-];
-
-const RETRIEVAL_KEYWORDS = [
-  /\bwhat did i say earlier\b/i,
-  /\bsummarize memory\b/i,
-  /\bfind my notes\b/i,
-  /\brecall previous tasks\b/i,
-  /\bremember\b.*\b(earlier|before|previous)\b/i,
-  /\bsearch memory\b/i,
-];
-
-const REASONING_KEYWORDS = [
-  /^(explain|analyze|analyse|compare|teach me|walk me through)\b/i,
-  /\bwhy\b.+\?/i,
-  /\bpros and cons\b/i,
-];
-
-const ORCHESTRATION_KEYWORDS = [
-  /\bautomate\b/i,
-  /\bschedule\b/i,
-  /\bworkflow\b/i,
-  /\bset up\b.+\b(reminder|monitor|automation)\b/i,
-  /\bkeep an eye on\b/i,
-];
-
-const CONVERSATIONAL_KEYWORDS = [
-  /^(hi|hello|hey|yo)\b/i,
-  /\bhow are you\b/i,
-  /\bi feel\b/i,
-  /\bcan we talk\b/i,
-  /\bwhat do you think\b/i,
-];
-
-const DETERMINISTIC_SEARCH_PATTERNS = [
-  /^open\s+.+\s+and\s+search\s+.+$/i,
-  /^search\s+.+\s+on\s+google$/i,
-  /^search\s+.+\s+on\s+youtube$/i,
-];
-
 function isHybridExecutionRequest(normalizedInput: string): boolean {
   return (
-    /\band\b/i.test(normalizedInput) &&
-    /(\bopen\b|\blaunch\b|\bplay\b|\bsearch\b|\bgoogle\b)/i.test(normalizedInput) &&
-    /(\bsearch\b|\bgoogle\b|\bexplain\b|\bcompare\b|\bfind\b|\bteach\b|\bsummarize\b)/i.test(normalizedInput)
+    PRECOMPILED_REGEX.hybridAnd.test(normalizedInput) &&
+    PRECOMPILED_REGEX.hybridExecution.test(normalizedInput) &&
+    PRECOMPILED_REGEX.hybridMixed.test(normalizedInput)
   );
 }
 
 function detectDeterministicSearchIntent(normalizedInput: string): RuntimeModeClassification | null {
-  if (!DETERMINISTIC_SEARCH_PATTERNS.some((pattern) => pattern.test(normalizedInput))) {
+  if (!PRECOMPILED_REGEX.deterministicSearch.some((pattern) => pattern.test(normalizedInput))) {
     return null;
   }
 
-  log.info("DETERMINISTIC SEARCH WORKFLOW DETECTED", { input: normalizedInput });
+  if (IS_RUNTIME_DEBUG) {
+    log.info("DETERMINISTIC SEARCH WORKFLOW DETECTED", { input: normalizedInput });
+  }
 
-  return {
+  const classification: RuntimeModeClassification = {
     mode: "execution",
     normalizedInput,
     confidence: 0.99,
     reason: "deterministic-web-search",
     detectedModes: ["execution"],
     targetAgent: "laptopAgent",
-    intent: "web_search",
+    intent: IntentEnum.BROWSER_SEARCH,
     selectedModel: Models.FAST,
+    executionSource: "semantic-search",
   };
+
+  if (IS_RUNTIME_DEBUG) {
+    log.info("EXECUTION SOURCE DETECTED", { source: classification.executionSource });
+  }
+
+  return classification;
 }
+
+
+
+function detectSemanticFactualIntent(normalizedInput: string): RuntimeModeClassification | null {
+  const extraction = extractQuery(normalizedInput);
+  if (!extraction) {
+    return null;
+  }
+  const classification: RuntimeModeClassification = {
+    mode: "execution",
+    normalizedInput,
+    confidence: 0.90,
+    reason: "semantic-factual-query",
+    detectedModes: ["execution"],
+    targetAgent: "laptopAgent",
+    intent: IntentEnum.BROWSER_SEARCH,
+    selectedModel: Models.FAST,
+    executionSource: "semantic-search",
+  };
+  if (IS_RUNTIME_DEBUG) {
+    log.info("SEMANTIC FACTUAL INTENT DETECTED", { query: extraction.query, classification });
+  }
+  return classification;
+}
+
 
 function detectExecutionIntent(normalizedInput: string): RuntimeModeClassification | null {
   const fastCommand = routeFastCommand(normalizedInput);
-
   if (fastCommand) {
     const intent =
       fastCommand.kind === "open_url" || fastCommand.kind === "browser_home" || fastCommand.kind === "youtube"
@@ -118,7 +163,21 @@ function detectExecutionIntent(normalizedInput: string): RuntimeModeClassificati
             ? "system_command"
             : "system_command";
 
-    return {
+    let executionSource: "alias" | "semantic-search" | "direct-launch" | "system-command" = "system-command";
+    if (fastCommand.kind === "open_app" || fastCommand.kind === "youtube" || fastCommand.kind === "close_app") {
+      executionSource = "alias";
+    } else if (
+      fastCommand.kind === "open_url" ||
+      fastCommand.kind === "browser_home" ||
+      fastCommand.kind === "open_path" ||
+      fastCommand.kind === "open_downloads"
+    ) {
+      executionSource = "direct-launch";
+    } else if (fastCommand.kind === "volume") {
+      executionSource = "system-command";
+    }
+
+    const classification: RuntimeModeClassification = {
       mode: "execution",
       normalizedInput,
       confidence: 0.99,
@@ -127,55 +186,92 @@ function detectExecutionIntent(normalizedInput: string): RuntimeModeClassificati
       targetAgent: "laptopAgent",
       intent,
       selectedModel: Models.FAST,
+      executionSource,
     };
-  }
 
-  if (EXECUTION_KEYWORDS.some((pattern) => pattern.test(normalizedInput))) {
-    if (/screenshot|screenshort|screen\s+shot|capture\s+screen|take\s+screenshot|take\s+a\s+screenshot|ss/i.test(normalizedInput)) {
-      log.info("SCREENSHOT EXECUTION INTENT DETECTED", { input: normalizedInput });
+    if (IS_RUNTIME_DEBUG) {
+      log.info("EXECUTION SOURCE DETECTED", { source: classification.executionSource });
     }
 
-    const intent =
-      /\b(youtube|browser|google|search|website|url|music)\b/i.test(normalizedInput)
-        ? "web_navigation"
-        : /\b(notepad|calculator|calc|chrome|edge|firefox|vscode|settings)\b/i.test(normalizedInput)
-          ? "application_launch"
-          : "system_command";
-
-    return {
-      mode: "execution",
-      normalizedInput,
-      confidence: 0.97,
-      reason: "execution-pattern",
-      detectedModes: ["execution"],
-      targetAgent: "laptopAgent",
-      intent,
-      selectedModel: Models.FAST,
-    };
+    return classification;
   }
 
-  return null;
+  if (!PRECOMPILED_REGEX.executionKeywords.some((pattern) => pattern.test(normalizedInput))) {
+    return null;
+  }
+
+  if (PRECOMPILED_REGEX.screenshot.test(normalizedInput)) {
+    if (IS_RUNTIME_DEBUG) {
+      log.info("SCREENSHOT EXECUTION INTENT DETECTED", { input: normalizedInput });
+    }
+  }
+
+  const intent = PRECOMPILED_REGEX.webNavigationIntent.test(normalizedInput)
+    ? "web_navigation"
+    : PRECOMPILED_REGEX.appLaunchIntent.test(normalizedInput)
+      ? "application_launch"
+      : "system_command";
+
+  let executionSource: "alias" | "semantic-search" | "direct-launch" | "system-command" = "system-command";
+  if (PRECOMPILED_REGEX.screenshot.test(normalizedInput)) {
+    executionSource = "system-command";
+  } else if (/search|google|find on google|look up/i.test(normalizedInput) && !/^(open|launch|start|run)\s+(google|youtube)\b/i.test(normalizedInput)) {
+    executionSource = "semantic-search";
+  } else if (/notepad|calculator|calc|chrome|edge|firefox|vscode|settings/i.test(normalizedInput)) {
+    executionSource = "alias";
+  } else if (/shutdown|restart|reboot|sleep|lock|sign out|log out/i.test(normalizedInput)) {
+    executionSource = "system-command";
+  } else if (/^(open|launch|start|run)\s+/i.test(normalizedInput)) {
+    executionSource = "direct-launch";
+  }
+
+  const executionMode = determineExecutionMode(0.97);
+  const classification: RuntimeModeClassification = {
+    mode: "execution",
+    normalizedInput,
+    confidence: 0.97,
+    reason: "execution-pattern",
+    detectedModes: ["execution"],
+    targetAgent: "laptopAgent",
+    intent,
+    selectedModel: Models.FAST,
+    executionSource,
+    executionMode,
+  };
+
+  if (IS_RUNTIME_DEBUG) {
+    log.info("EXECUTION SOURCE DETECTED", { source: classification.executionSource });
+  }
+
+  return classification;
 }
 
 export function classifyRuntimeMode(input: string): RuntimeModeClassification {
+  const startedAt = nowMs();
   const normalizedInput = normalizeCommandInput(input);
-  console.log("RUNTIME MODE CLASSIFIER ACTIVE");
-  console.log("INPUT NORMALIZED", normalizedInput);
-  log.info("Classifying runtime mode", { input, normalizedInput });
+  if (IS_RUNTIME_DEBUG) {
+    log.info("Classifying runtime mode", { input, normalizedInput });
+  }
 
   const deterministicSearch = detectDeterministicSearchIntent(normalizedInput);
   if (deterministicSearch) {
-    log.info("Runtime mode detected", { classification: deterministicSearch });
-    console.log("RUNTIME MODE DETECTED", deterministicSearch);
-    console.log("EXECUTION SEARCH BYPASS ACTIVE");
+    logPerf(log, "classifyRuntimeMode completed", startedAt, { mode: deterministicSearch.mode });
     return deterministicSearch;
   }
 
+  // Check for semantic factual queries (e.g., "tell me virat kohli age")
+  const semanticFactual = detectSemanticFactualIntent(normalizedInput);
+  if (semanticFactual) {
+    logPerf(log, "classifyRuntimeMode completed", startedAt, { mode: semanticFactual.mode });
+    return semanticFactual;
+  }
   const hasExecution = detectExecutionIntent(normalizedInput);
-  const hasRetrieval = RETRIEVAL_KEYWORDS.some((pattern) => pattern.test(normalizedInput));
-  const hasReasoning = REASONING_KEYWORDS.some((pattern) => pattern.test(normalizedInput));
-  const hasOrchestration = ORCHESTRATION_KEYWORDS.some((pattern) => pattern.test(normalizedInput));
-  const hasConversational = CONVERSATIONAL_KEYWORDS.some((pattern) => pattern.test(normalizedInput));
+
+  
+  const hasRetrieval = PRECOMPILED_REGEX.retrievalKeywords.some((pattern) => pattern.test(normalizedInput));
+  const hasReasoning = PRECOMPILED_REGEX.reasoningKeywords.some((pattern) => pattern.test(normalizedInput));
+  const hasOrchestration = PRECOMPILED_REGEX.orchestrationKeywords.some((pattern) => pattern.test(normalizedInput));
+  const hasConversational = PRECOMPILED_REGEX.conversationalKeywords.some((pattern) => pattern.test(normalizedInput));
   const detectedModes: RuntimeMode[] = [
     ...(hasExecution ? ["execution" as const] : []),
     ...(hasRetrieval ? ["retrieval" as const] : []),
@@ -192,16 +288,12 @@ export function classifyRuntimeMode(input: string): RuntimeModeClassification {
       reason: "execution-plus-nonexecution",
       detectedModes: detectedModes.length > 0 ? detectedModes : ["execution"],
     };
-    log.info("Runtime mode detected", { classification: result });
-    console.log("RUNTIME MODE DETECTED", result);
-    console.log("HYBRID MODE ACTIVE");
+    logPerf(log, "classifyRuntimeMode completed", startedAt, { mode: result.mode });
     return result;
   }
 
   if (hasExecution) {
-    log.info("Runtime mode detected", { classification: hasExecution });
-    console.log("RUNTIME MODE DETECTED", hasExecution);
-    console.log("EXECUTION MODE ACTIVE");
+    logPerf(log, "classifyRuntimeMode completed", startedAt, { mode: hasExecution.mode });
     return hasExecution;
   }
 
@@ -213,9 +305,7 @@ export function classifyRuntimeMode(input: string): RuntimeModeClassification {
       reason: "retrieval-pattern",
       detectedModes: ["retrieval"],
     };
-    log.info("Runtime mode detected", { classification: result });
-    console.log("RUNTIME MODE DETECTED", result);
-    console.log("RETRIEVAL MODE ACTIVE");
+    logPerf(log, "classifyRuntimeMode completed", startedAt, { mode: result.mode });
     return result;
   }
 
@@ -227,9 +317,7 @@ export function classifyRuntimeMode(input: string): RuntimeModeClassification {
       reason: "reasoning-pattern",
       detectedModes: ["reasoning"],
     };
-    log.info("Runtime mode detected", { classification: result });
-    console.log("RUNTIME MODE DETECTED", result);
-    console.log("REASONING MODE ACTIVE");
+    logPerf(log, "classifyRuntimeMode completed", startedAt, { mode: result.mode });
     return result;
   }
 
@@ -241,9 +329,7 @@ export function classifyRuntimeMode(input: string): RuntimeModeClassification {
       reason: "orchestration-pattern",
       detectedModes: ["orchestration"],
     };
-    log.info("Runtime mode detected", { classification: result });
-    console.log("RUNTIME MODE DETECTED", result);
-    console.log("ORCHESTRATION MODE ACTIVE");
+    logPerf(log, "classifyRuntimeMode completed", startedAt, { mode: result.mode });
     return result;
   }
 
@@ -255,9 +341,7 @@ export function classifyRuntimeMode(input: string): RuntimeModeClassification {
       reason: "conversational-pattern",
       detectedModes: ["conversational"],
     };
-    log.info("Runtime mode detected", { classification: result });
-    console.log("RUNTIME MODE DETECTED", result);
-    console.log("CONVERSATIONAL MODE ACTIVE");
+    logPerf(log, "classifyRuntimeMode completed", startedAt, { mode: result.mode });
     return result;
   }
 
@@ -268,8 +352,6 @@ export function classifyRuntimeMode(input: string): RuntimeModeClassification {
     reason: "default-conversational",
     detectedModes: ["conversational"],
   };
-  log.info("Runtime mode detected", { classification: fallback });
-  console.log("RUNTIME MODE DETECTED", fallback);
-  console.log("CONVERSATIONAL MODE ACTIVE");
+  logPerf(log, "classifyRuntimeMode completed", startedAt, { mode: fallback.mode });
   return fallback;
 }

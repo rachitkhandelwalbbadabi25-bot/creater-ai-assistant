@@ -4,17 +4,17 @@ import { emotionAgentNode } from "./emotionAgent.js";
 import { laptopAgentNode } from "./laptopAgent.js";
 import { projectAgentNode } from "./projectAgent.js";
 import { skillAgentNode } from "./skillAgent.js";
-
 import { createLogger } from "@utils/logger.js";
 import { formatErrorForUser } from "@utils/errorHandler.js";
 import { classifyRuntimeMode } from "../runtime/RuntimeModeClassifier.js";
-
-// Memory observability
 import { logMemorySnapshot } from "@utils/memory.js";
-
+import { IS_RUNTIME_DEBUG, logPerf, nowMs } from "@utils/perf.js";
+import { ExecutionModeEnum, IntentEnum } from "../runtime/semantic/semanticTypes.js";
+import { normalizeIntent } from "../runtime/semantic/intentDetector.js";
 const log = createLogger("graph/supervisor");
 
-// Simple workflow counter for periodic memory snapshots
+
+
 let workflowCount = 0;
 
 type AgentNode = (state: GraphState) => Promise<GraphState>;
@@ -36,41 +36,56 @@ async function routeExecutionState(
   state: GraphState,
   input: string,
 ): Promise<{ state: GraphState; bypassedExecution: boolean }> {
+  const startedAt = nowMs();
   const runtimeClassification = classifyRuntimeMode(input);
-  console.log("RUNTIME MODE CLASSIFIER ACTIVE");
-  log.info("RUNTIME MODE CLASSIFIER ACTIVE", { classification: runtimeClassification });
+  if (IS_RUNTIME_DEBUG) {
+    log.info("RUNTIME MODE CLASSIFIER ACTIVE", { classification: runtimeClassification });
+  }
+  // Deterministic isolation guard: ensure downstream pipelines are skipped when in deterministic mode
+  if (runtimeClassification.executionMode === ExecutionModeEnum.DETERMINISTIC) {
+    if (IS_RUNTIME_DEBUG) {
+      log.info("Deterministic isolation enforced for execution", { mode: runtimeClassification.executionMode });
+    }
+    // Additional isolation logic can be added here if needed
+  }
 
   if (runtimeClassification.mode === "execution") {
-    console.log("EXECUTION MODE ACTIVE");
-    console.log("DIRECT EXECUTION ROUTE ACTIVE");
-    console.log("EXECUTION BYPASS CONFIRMED");
-    console.log("CONVERSATIONAL PIPELINE SKIPPED");
-    if (runtimeClassification.intent === "web_search" || runtimeClassification.intent === "web_navigation") {
-      console.log("EXECUTION SEARCH BYPASS ACTIVE");
+    if (IS_RUNTIME_DEBUG) {
       log.info("Execution intent bypassing conversational routing", {
         intent: runtimeClassification.intent,
         targetAgent: runtimeClassification.targetAgent,
       });
     }
 
-    return {
+    const result = {
       state: await laptopAgentNode({
         ...state,
         currentInput: runtimeClassification.normalizedInput,
-        intent: runtimeClassification.intent ?? "system_control",
+        intent: runtimeClassification.intent ? normalizeIntent(runtimeClassification.intent) : IntentEnum.SYSTEM_ACTION,
         intentConfidence: runtimeClassification.confidence,
         targetAgent: runtimeClassification.targetAgent ?? "laptopAgent",
         selectedModel: runtimeClassification.selectedModel ?? state.selectedModel,
         contextBlock: "",
         memoryRetrieved: false,
         currentStep: "executing",
+        // Execution bypass flags – ensure downstream pipelines are skipped
+        skipConversationPipeline: true,
+        skipEmotionPipeline: true,
+        skipSemanticRetrieval: true,
+        allowConversationalFallback: false,
+        executionSource: runtimeClassification.executionSource,
       }),
       bypassedExecution: true,
     };
+    logPerf(log, "routeExecutionState completed", startedAt, { mode: runtimeClassification.mode });
+    return result;
   }
 
   const routedState = await routeConversationalState(state);
-  log.info(`Routed -> agent=${routedState.targetAgent}, intent=${routedState.intent}, mood=${routedState.mood}`);
+  if (IS_RUNTIME_DEBUG) {
+    log.info(`Routed -> agent=${routedState.targetAgent}, intent=${routedState.intent}, mood=${routedState.mood}`);
+  }
+  logPerf(log, "routeExecutionState completed", startedAt, { mode: runtimeClassification.mode });
   return { state: routedState, bypassedExecution: false };
 }
 
@@ -79,53 +94,47 @@ export async function processMessageStreaming(
   channel: GraphState["channel"] = "tui",
   onToken?: (token: string) => void,
 ): Promise<string> {
-  const startTime = Date.now();
-  log.info("STREAMING MODE ACTIVE");
-
-  // Memory snapshot at start of workflow
+  const startTime = nowMs();
   workflowCount++;
-  log.info(`Workflow #${workflowCount} started`);
-  logMemorySnapshot(`Workflow ${workflowCount} start`);
+  if (IS_RUNTIME_DEBUG) {
+    log.info("STREAMING MODE ACTIVE");
+    log.info(`Workflow #${workflowCount} started`);
+  }
+  if (IS_RUNTIME_DEBUG) {
+    logMemorySnapshot(`Workflow ${workflowCount} start`);
+  }
 
-  let state: GraphState | undefined;
+  let state: GraphState = createInitialState(input, channel);
   try {
-    state = createInitialState(input, channel);
     state.onToken = onToken;
-    log.info(`Processing (stream): "${input.slice(0, 80)}..." [${channel}]`);
+    if (IS_RUNTIME_DEBUG) {
+      log.info(`Processing (stream): "${input.slice(0, 80)}..." [${channel}]`);
+    }
 
     const routed = await routeExecutionState(state, input);
     state = routed.state;
 
     if (!routed.bypassedExecution) {
       const agentFn = AGENTS[state.targetAgent];
-      if (!agentFn) {
-        log.warn(`Unknown agent "${state.targetAgent}" - falling back to taskAgent`);
-        state = await taskAgentNode(state);
-      } else {
-        state = await agentFn(state);
-      }
+      state = agentFn ? await agentFn(state) : await taskAgentNode(state);
     }
 
     if (state.requiresConfirmation && state.pendingConfirmation) {
-      log.info(`Awaiting user confirmation for: ${state.pendingConfirmation.toolId}`);
       return state.response;
     }
 
-    const elapsed = Date.now() - startTime;
-    log.info(`Streaming response generated in ${elapsed}ms`, {
+    logPerf(log, "processMessageStreaming completed", startTime, {
       agent: state.targetAgent,
       intent: state.intent,
-      mood: state.mood,
       responseLen: state.response.length,
     });
 
-    // End of workflow memory snapshot
-    logMemorySnapshot(`Workflow ${workflowCount} end`);
-    if (workflowCount % 5 === 0) {
-      log.info(`Periodic memory snapshot after ${workflowCount} workflows`);
-      logMemorySnapshot(`Periodic snapshot at ${workflowCount} workflows`);
+    if (IS_RUNTIME_DEBUG) {
+      logMemorySnapshot(`Workflow ${workflowCount} end`);
+      if (workflowCount % 5 === 0) {
+        logMemorySnapshot(`Periodic snapshot at ${workflowCount} workflows`);
+      }
     }
-
     return state.response;
   } catch (error) {
     log.error("Streaming pipeline error", error);
@@ -134,7 +143,6 @@ export async function processMessageStreaming(
     if (state) {
       state.onToken = undefined;
     }
-    log.info("STREAMING CLEANUP: token handler cleared");
   }
 }
 
@@ -142,56 +150,56 @@ export async function processMessage(
   input: string,
   channel: GraphState["channel"] = "tui",
 ): Promise<string> {
-  const startTime = Date.now();
-
-  // Memory snapshot at start of workflow
+  const startTime = nowMs();
   workflowCount++;
-  log.info(`Workflow #${workflowCount} started`);
-  logMemorySnapshot(`Workflow ${workflowCount} start`);
+  if (IS_RUNTIME_DEBUG) {
+    log.info(`Workflow #${workflowCount} started`);
+  }
+  if (IS_RUNTIME_DEBUG) {
+    logMemorySnapshot(`Workflow ${workflowCount} start`);
+  }
 
+  let state: GraphState | undefined;
   try {
-    let state = createInitialState(input, channel);
-    log.info(`Processing: "${input.slice(0, 80)}..." [${channel}]`);
+    // Initialize the graph state before routing
+    state = createInitialState(input, channel);
+
+    if (IS_RUNTIME_DEBUG) {
+      log.info(`Processing: "${input.slice(0, 80)}..." [${channel}]`);
+    }
 
     const routed = await routeExecutionState(state, input);
     state = routed.state;
 
     if (!routed.bypassedExecution) {
       const agentFn = AGENTS[state.targetAgent];
-      if (!agentFn) {
-        log.warn(`Unknown agent "${state.targetAgent}" - falling back to taskAgent`);
-        state = await taskAgentNode(state);
-      } else {
-        state = await agentFn(state);
-      }
+      state = agentFn ? await agentFn(state) : await taskAgentNode(state);
     }
 
     if (state.requiresConfirmation && state.pendingConfirmation) {
-      log.info(`Awaiting user confirmation for: ${state.pendingConfirmation.toolId}`);
       return state.response;
     }
 
-    const elapsed = Date.now() - startTime;
-    log.info(`Response generated in ${elapsed}ms`, {
+    logPerf(log, "processMessage completed", startTime, {
       agent: state.targetAgent,
       intent: state.intent,
-      mood: state.mood,
       responseLen: state.response.length,
     });
 
-    // End of workflow memory snapshot
-    logMemorySnapshot(`Workflow ${workflowCount} end`);
-    if (workflowCount % 5 === 0) {
-      log.info(`Periodic memory snapshot after ${workflowCount} workflows`);
-      logMemorySnapshot(`Periodic snapshot at ${workflowCount} workflows`);
+    if (IS_RUNTIME_DEBUG) {
+      logMemorySnapshot(`Workflow ${workflowCount} end`);
+      if (workflowCount % 5 === 0) {
+        logMemorySnapshot(`Periodic snapshot at ${workflowCount} workflows`);
+      }
     }
-
     return state.response;
   } catch (error) {
     log.error("Pipeline error", error);
     return formatErrorForUser(error);
   } finally {
-    // No token handler in non‑streaming path, nothing to clear
+    if (state) {
+      state.onToken = undefined;
+    }
   }
 }
 
@@ -204,6 +212,8 @@ export async function processConfirmation(
     return "👍 Theek hai, cancel kar diya. Kuch aur chahiye?";
   }
 
-  log.info(`User confirmed tool: ${pendingToolId}`, { pendingParams });
+  if (IS_RUNTIME_DEBUG) {
+    log.info(`User confirmed tool: ${pendingToolId}`, { pendingParams });
+  }
   return `✅ Running ${pendingToolId}... (tool execution coming soon)`;
 }

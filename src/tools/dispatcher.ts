@@ -1,105 +1,161 @@
-// ════════════════════════════════════════════════════════════════════════════════
-// src/tools/dispatcher.ts — Maps tool IDs to their implementation functions
-// ════════════════════════════════════════════════════════════════════════════════
-
 import * as fsTools from "./laptop/fileSystem.js";
 import * as shellTools from "./laptop/executor.js";
 import * as systemTools from "./laptop/system.js";
-import * as browserTools from "./laptop/browser.js";
 import * as editorTools from "./laptop/editor.js";
-import * as computerTools from "./laptop/computer.js";
 import * as launcherTools from "./laptop/launcher.js";
 import { ToolError } from "@utils/errorHandler.js";
 import { createLogger } from "@utils/logger.js";
+import { IS_RUNTIME_DEBUG, logPerf, nowMs } from "@utils/perf.js";
 
 const log = createLogger("tools/dispatcher");
 
-export async function dispatchTool(toolId: string, params: any): Promise<any> {
-  log.info(`Dispatching tool: ${toolId}`, params);
+type ToolParams = Record<string, unknown>;
+type ToolResult = unknown;
+type ToolHandler = (params: ToolParams) => Promise<ToolResult>;
+
+const FAST_TOOLS: Record<string, ToolHandler> = {
+  "fs.read_file": (params) => fsTools.readFileContent(params.path as string, params.encoding as BufferEncoding | undefined),
+  "fs.write_file": (params) => fsTools.writeFileContent(params.path as string, params.content as string, params.append as boolean | undefined),
+  "fs.delete_file": (params) => fsTools.deleteFile(params.path as string),
+  "fs.list_directory": (params) => fsTools.listDirectory(params.path as string, params.pattern as string | undefined),
+  "shell.execute": (params) => shellTools.executeCommand(params.command as string, params.cwd as string | undefined, params.timeout_ms as number | undefined),
+  "shell.execute_dangerous": (params) => shellTools.executeCommand(params.command as string),
+  "system.info": () => systemTools.getSystemInfo(),
+  "system.notify": async () => ({ success: true, message: "Notification sent (mock)" }),
+  "system.open_app": (params) => launcherTools.openApp(params.app as string),
+  "system.open_path": (params) => launcherTools.openFileOrPath(params.path as string),
+  "browser.navigate": (params) => launcherTools.openUrl(params.url as string),
+  "editor.open_file": (params) => editorTools.openInVSCode(params.path as string, params.line as number | undefined),
+  "git.status": (params) => editorTools.gitStatus(params.repo_path as string),
+  "git.commit": (params) => editorTools.gitCommit(params.repo_path as string, params.message as string),
+};
+
+const HEAVY_TOOL_LOADERS: Record<string, () => Promise<ToolHandler>> = {
+  "browser.extract_text": async () => {
+    const browserTools = await import("./laptop/browser.js");
+    return (params) => browserTools.extractText(params.url as string);
+  },
+  "browser.screenshot": async () => {
+    const browserTools = await import("./laptop/browser.js");
+    return (params) => browserTools.takeScreenshot(params.url as string, (params.savePath as string | undefined) || `./screenshot_${Date.now()}.png`);
+  },
+  "computer.open_browser": async () => {
+    const computerTools = await import("./laptop/computer.js");
+    return (params) => computerTools.openBrowser(params.url as string | undefined);
+  },
+  "computer.navigate": async () => {
+    const computerTools = await import("./laptop/computer.js");
+    return (params) => computerTools.navigateTo(params.url as string);
+  },
+  "computer.click": async () => {
+    const computerTools = await import("./laptop/computer.js");
+    return (params) => computerTools.clickAt(params.x as number, params.y as number);
+  },
+  "computer.click_selector": async () => {
+    const computerTools = await import("./laptop/computer.js");
+    return (params) => computerTools.clickSelector(params.selector as string);
+  },
+  "computer.type": async () => {
+    const computerTools = await import("./laptop/computer.js");
+    return (params) => computerTools.typeText(params.text as string, params.selector as string | undefined);
+  },
+  "computer.press_key": async () => {
+    const computerTools = await import("./laptop/computer.js");
+    return (params) => computerTools.pressKey(params.key as string);
+  },
+  "computer.shortcut": async () => {
+    const computerTools = await import("./laptop/computer.js");
+    return (params) => computerTools.keyboardShortcut(params.shortcut as string);
+  },
+  "computer.scroll": async () => {
+    const computerTools = await import("./laptop/computer.js");
+    return (params) => computerTools.scrollPage(params.direction as "up" | "down", params.amount as number | undefined);
+  },
+  "computer.screenshot": async () => {
+    const computerTools = await import("./laptop/computer.js");
+    return () => computerTools.takeScreenshotOfPage();
+  },
+  "computer.get_text": async () => {
+    const computerTools = await import("./laptop/computer.js");
+    return () => computerTools.getPageText();
+  },
+  "computer.fill_form": async () => {
+    const computerTools = await import("./laptop/computer.js");
+    return (params) => computerTools.fillForm(params.selector as string, params.value as string);
+  },
+  "computer.play_youtube": async () => {
+    const computerTools = await import("./laptop/computer.js");
+    return (params) => computerTools.playYouTube(params.query as string);
+  },
+  "computer.close_browser": async () => {
+    const computerTools = await import("./laptop/computer.js");
+    return () => computerTools.closeBrowserWindow();
+  },
+};
+
+import { RuntimeCommand } from "../runtime/runtimeCommand.js";
+
+const heavyToolCache = new Map<string, ToolHandler>();
+
+export async function dispatchTool(toolId: string, params: ToolParams): Promise<ToolResult> {
+  const startedAt = nowMs();
+  if (IS_RUNTIME_DEBUG) {
+    log.info(`Dispatching tool: ${toolId}`, params);
+  }
+
   if (toolId.startsWith("system.open") || toolId.startsWith("computer.") || toolId === "browser.navigate") {
     console.log("[LAUNCH TRACE]", "src/tools/dispatcher.ts", "dispatchTool", { toolId, params });
   }
 
+  // Handle standardized RuntimeCommands
+  if (toolId === RuntimeCommand.CHAT) {
+    const { chat } = await import("../llm/client.js");
+    const { SYSTEM_PROMPT } = await import("../llm/prompts.js");
+    const { GenerationPresets, Models } = await import("../config/models.js");
+    const messages = [
+      { role: "system" as const, content: SYSTEM_PROMPT },
+      { role: "user" as const, content: params.input as string }
+    ];
+    const response = await chat({
+      model: Models.PRIMARY,
+      messages,
+      options: GenerationPresets.conversational
+    });
+    return response;
+  }
+
+  if (toolId === RuntimeCommand.WEB_SEARCH) {
+    const { openUrl } = await import("./laptop/launcher.js");
+    const query = params.query as string;
+    const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+    await openUrl(url);
+    return `Searching Google for "${query}"...`;
+  }
+
   try {
-    switch (toolId) {
-      // ── File System ──
-      case "fs.read_file":
-        return await fsTools.readFileContent(params.path, params.encoding);
-      case "fs.write_file":
-        return await fsTools.writeFileContent(params.path, params.content, params.append);
-      case "fs.delete_file":
-        return await fsTools.deleteFile(params.path);
-      case "fs.list_directory":
-        return await fsTools.listDirectory(params.path, params.pattern);
-
-      // ── Shell ──
-      case "shell.execute":
-        return await shellTools.executeCommand(params.command, params.cwd, params.timeout_ms);
-      case "shell.execute_dangerous":
-        return await shellTools.executeCommand(params.command);
-
-      // ── System ──
-      case "system.info":
-        return await systemTools.getSystemInfo();
-      case "system.notify":
-        // TODO: Implement notification tool
-        return { success: true, message: "Notification sent (mock)" };
-      case "system.open_app":
-        return await launcherTools.openApp(params.app);
-      case "system.open_path":
-        return await launcherTools.openFileOrPath(params.path);
-
-      // ── Browser ──
-        case "browser.navigate":
-          // FAST URL NAVIGATION DETECTED – bypass Playwright for simple navigation
-          log.info("PLAYWRIGHT BYPASS ACTIVE", { url: params.url });
-          const result = await launcherTools.openUrl(params.url);
-          log.info("DIRECT URL LAUNCH EXECUTED", { url: params.url, result });
-          return result;
-      case "browser.extract_text":
-        return await browserTools.extractText(params.url);
-      case "browser.screenshot":
-        return await browserTools.takeScreenshot(params.url, params.savePath || `./screenshot_${Date.now()}.png`);
-
-      // ── Editor / Git ──
-      case "editor.open_file":
-        return await editorTools.openInVSCode(params.path, params.line);
-      case "git.status":
-        return await editorTools.gitStatus(params.repo_path);
-      case "git.commit":
-        return await editorTools.gitCommit(params.repo_path, params.message);
-
-      // ── Computer Control ──
-      case "computer.open_browser":
-        return await computerTools.openBrowser(params.url);
-      case "computer.navigate":
-        return await computerTools.navigateTo(params.url);
-      case "computer.click":
-        return await computerTools.clickAt(params.x, params.y);
-      case "computer.click_selector":
-        return await computerTools.clickSelector(params.selector);
-      case "computer.type":
-        return await computerTools.typeText(params.text, params.selector);
-      case "computer.press_key":
-        return await computerTools.pressKey(params.key);
-      case "computer.shortcut":
-        return await computerTools.keyboardShortcut(params.shortcut);
-      case "computer.scroll":
-        return await computerTools.scrollPage(params.direction, params.amount);
-      case "computer.screenshot":
-        return await computerTools.takeScreenshotOfPage();
-      case "computer.get_text":
-        return await computerTools.getPageText();
-      case "computer.fill_form":
-        return await computerTools.fillForm(params.selector, params.value);
-      case "computer.play_youtube":
-        return await computerTools.playYouTube(params.query);
-      case "computer.close_browser":
-        return await computerTools.closeBrowserWindow();
-
-      default:
-        throw new ToolError(toolId, `No implementation found for tool: ${toolId}`);
+    const fastTool = FAST_TOOLS[toolId];
+    if (fastTool) {
+      if (toolId === "browser.navigate" && IS_RUNTIME_DEBUG) {
+        log.info("PLAYWRIGHT BYPASS ACTIVE", { url: params.url });
+      }
+      const result = await fastTool(params);
+      logPerf(log, `dispatchTool:${toolId}`, startedAt, { path: "fast" });
+      return result;
     }
+
+    let heavyTool = heavyToolCache.get(toolId);
+    if (!heavyTool) {
+      const loader = HEAVY_TOOL_LOADERS[toolId];
+      if (!loader) {
+        throw new ToolError(toolId, `No implementation found for tool: ${toolId}`);
+      }
+      heavyTool = await loader();
+      heavyToolCache.set(toolId, heavyTool);
+    }
+
+    const result = await heavyTool(params);
+    logPerf(log, `dispatchTool:${toolId}`, startedAt, { path: "heavy" });
+    return result;
   } catch (error) {
     log.error(`Tool execution failed: ${toolId}`, error);
     throw error;

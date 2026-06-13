@@ -180,28 +180,45 @@ export function setupGlobalErrorHandler(): void {
   });
 }
 
-// ─── Error formatter (user-friendly messages) ────────────────────────────────────
-/**
- * Converts any error into a Hinglish-friendly message for the user.
- */
 export function formatErrorForUser(error: unknown): string {
   if (error instanceof SafetyError) {
     return `🛑 Safety check failed: ${error.message}. Mujhe permission chahiye iske liye.`;
   }
+
+  const errMsg = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  
+  // Specific fallbacks for browser launch errors
+  if (
+    errMsg.includes("browser") || 
+    errMsg.includes("chrome") || 
+    errMsg.includes("firefox") || 
+    errMsg.includes("edge") ||
+    errMsg.includes("navigate")
+  ) {
+    return "Could not launch requested browser.";
+  }
+
+  // Specific fallbacks for application or path execution errors
+  if (
+    errMsg.includes("unable to open") || 
+    errMsg.includes("open_app") || 
+    errMsg.includes("open_path") || 
+    errMsg.includes("launch") || 
+    errMsg.includes("executable") ||
+    errMsg.includes("spawn")
+  ) {
+    return "Unable to open requested app.";
+  }
+
   if (error instanceof LLMError) {
-    return `🤖 AI se connect nahi ho pa raha. Kya Ollama chal raha hai? (${error.message})`;
+    return `🤖 AI se connect nahi ho pa raha. Kya Ollama chal raha hai?`;
   }
   if (error instanceof ToolError) {
-    return `🔧 Tool '${error.toolId}' kaam nahi kiya: ${error.message}`;
+    return `Something went wrong while processing the request.`;
   }
   if (error instanceof MemoryError) {
     return `🧠 Memory mein kuch problem aa gayi: ${error.message}`;
   }
-  if (error instanceof CreaterError) {
-    return `❌ Kuch issue aa gaya [${error.code}]: ${error.message}`;
-  }
-  if (error instanceof Error) {
-    return `❌ Unexpected error: ${error.message}`;
-  }
-  return `❌ Unknown error: ${String(error)}`;
+  
+  return `Something went wrong while processing the request.`;
 }

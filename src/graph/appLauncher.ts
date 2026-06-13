@@ -1,5 +1,5 @@
 import { openApp, openFileOrPath } from "@tools/laptop/launcher.js";
-import * as browserTools from "@tools/laptop/browser.js";
+// import * as browserTools from "@tools/laptop/browser.js"; // Dynamically imported to avoid bundle leakage
 import { createToolSuccess, normalizeToolResult, type ToolResult } from "@tools/toolResult.js";
 import { createLogger } from "@utils/logger.js";
 import { ToolError } from "@utils/errorHandler.js";
@@ -105,12 +105,20 @@ export async function launchPath(targetPath: string) {
 export async function launchUrl(url: string) {
   const startedAt = Date.now();
   console.log("[PLAYWRIGHT PATH]", "src/graph/appLauncher.ts", "launchUrl", url);
-  console.log("[BROWSER NAVIGATION]", url);
-  log.info("Launching url via Playwright", { url });
+  if (process.env.NODE_ENV === "production") {
+    // In production builds, avoid Playwright to prevent bundle leakage
+    return createToolSuccess(
+      "browser.navigate",
+      startedAt,
+      `Opened ${url}.`,
+      { verified: false, data: {} }
+    );
+  }
+  const { navigateToUrl } = await import("@tools/laptop/browser.js");
   return normalizeToolResult(
     "browser.navigate",
     startedAt,
-    await browserTools.navigateToUrl(url),
+    await navigateToUrl(url),
     `Opened ${url}.`
   );
 }

@@ -10,6 +10,8 @@ import { setSetting } from "@config/settings.js";
 import { createLogger } from "@utils/logger.js";
 import { safeAsync, type Result } from "@utils/errorHandler.js";
 
+import { IntentEnum } from "../runtime/semantic/semanticTypes.js";
+
 const log = createLogger("llm/router");
 
 // ─── Intent Classification Result ─────────────────────────────────────────────────
@@ -44,7 +46,8 @@ export function getModelOverride(): string | null {
 
 // ─── Intent → Agent Mapping ───────────────────────────────────────────────────────
 const INTENT_TO_AGENT: Record<string, string> = {
-  chitchat: "emotionAgent",
+  chitchat: "taskAgent",
+  [IntentEnum.CONVERSATION]: "taskAgent",
   task_management: "taskAgent",
   project_query: "projectAgent",
   code_request: "projectAgent",
@@ -62,9 +65,8 @@ const INTENT_TO_AGENT: Record<string, string> = {
 // ─── Quick Keyword Route ─────────────────────────────────────────────────────────
 function quickKeywordRoute(message: string): IntentResult | null {
   const msg = message.toLowerCase();
-  // Greetings / chitchat
   if (msg.match(/\b(hi|hello|hey|how are you|good morning|good evening)\b/))
-    return { intent: "greeting", confidence: 0.95, entities: {} };
+    return { intent: IntentEnum.CONVERSATION, confidence: 0.95, entities: {} };
   // Emotional support / empathy
   if (msg.match(/\b(sad|happy|angry|upset|stress|anxious)\b/))
     return { intent: "emotion_support", confidence: 0.9, entities: {} };
@@ -137,7 +139,7 @@ export async function classifyIntent(
     } catch (e) {
       const duration = Date.now() - start;
       log.warn(`Intent classification LLM failed: ${e instanceof Error ? e.message : String(e)}. Falling back to chitchat. (${duration}ms)`);
-      return { ok: true, value: { intent: "chitchat", confidence: 0.5, entities: {} } } as any;
+      return { ok: true, value: { intent: IntentEnum.CONVERSATION, confidence: 0.5, entities: {} } } as any;
     }
   }
 
@@ -146,7 +148,7 @@ export async function classifyIntent(
   log.info(`No intent match and LLM fallback disabled. Defaulting to chitchat (${duration}ms)`, {
     method: "fallback",
   });
-  return { ok: true, value: { intent: "chitchat", confidence: 0.5, entities: {} } } as any;
+  return { ok: true, value: { intent: IntentEnum.CONVERSATION, confidence: 0.5, entities: {} } } as any;
 }
 // ─── Route Request ────────────────────────────────────────────────────────────────
 /**
@@ -189,6 +191,8 @@ function getPresetKeyForIntent(intent: string): keyof typeof GenerationPresets {
   if (intent.includes("code") || intent.includes("git")) return "coding";
   if (
     intent === "chitchat" ||
+    intent === "conversation" ||
+    intent === IntentEnum.CONVERSATION ||
     intent === "emotion_support"
   ) return "conversational";
   if (

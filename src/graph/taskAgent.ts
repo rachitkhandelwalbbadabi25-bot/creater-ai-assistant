@@ -22,7 +22,7 @@ export async function taskAgentNode(state: GraphState): Promise<GraphState> {
   ];
 
   const preset = state.intent.includes("code") ? GenerationPresets.coding
-    : state.intent === "chitchat" ? GenerationPresets.conversational
+    : (state.intent === "chitchat" || state.intent === "conversation") ? GenerationPresets.conversational
     : GenerationPresets.precise;
 
   let response = "";
@@ -51,7 +51,7 @@ export async function taskAgentNode(state: GraphState): Promise<GraphState> {
 
   // ── Long-term persistence (Vector RAG) ──────────────────────────────────────
   // We save the interaction if it's meaningful
-  if (state.intent !== "chitchat" && response.length > 20) {
+  if (state.intent !== "chitchat" && state.intent !== "conversation" && response.length > 20) {
     import("@memory/vector.js").then(({ addEntry }) => {
       addEntry(`User: ${state.currentInput}\nCreater: ${response}`, {
         intent: state.intent,

@@ -153,6 +153,7 @@ export const ModelRoutes: Record<string, ModelName> = {
   emotion_detection: Models.FAST,
   simple_qa: Models.FAST,
   chitchat: Models.FAST,
+  conversation: Models.FAST,
   routing: Models.FAST,
 
   // Reasoning / planning → primary model
@@ -253,6 +254,6 @@ export function getPresetForTask(taskType: string): GenerationOptions {
   if (taskType.includes("code") || taskType.includes("git")) return GenerationPresets.coding;
   if (taskType.includes("classification") || taskType.includes("routing") || taskType.includes("emotion")) return GenerationPresets.classification;
   if (taskType.includes("reasoning") || taskType.includes("planning") || taskType.includes("synthesis")) return GenerationPresets.reasoning;
-  if (taskType === "chitchat" || taskType === "morning_briefing" || taskType === "night_check") return GenerationPresets.conversational;
+  if (taskType === "chitchat" || taskType === "conversation" || taskType === "morning_briefing" || taskType === "night_check") return GenerationPresets.conversational;
   return GenerationPresets.precise;
 }

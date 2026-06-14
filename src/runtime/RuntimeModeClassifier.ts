@@ -5,6 +5,7 @@ import { createLogger } from "@utils/logger.js";
 import { IS_RUNTIME_DEBUG, logPerf, nowMs } from "@utils/perf.js";
 import { extractQuery } from "./semantic/queryExtractor.js";
 import { determineExecutionMode } from "./semantic/semanticExecutionPolicy.js";
+import { containsFactualAttribute } from "./semantic/intentDetector.js";
 
 export interface RuntimeModeClassification {
   mode: RuntimeMode;
@@ -13,7 +14,7 @@ export interface RuntimeModeClassification {
   reason: string;
   detectedModes: RuntimeMode[];
   executionMode?: "deterministic" | "validation" | "conversation";
-  intent?: "system_command" | "browser_command" | "application_launch" | "web_navigation" | IntentEnum.BROWSER_SEARCH;
+  intent?: IntentEnum;
   selectedModel?: string;
   executionSource?: "alias" | "semantic-search" | "direct-launch" | "system-command";
   targetAgent?: string;
@@ -80,6 +81,8 @@ const PRECOMPILED_REGEX = {
   hybridAnd: /\band\b/i,
   hybridExecution: /(\bopen\b|\blaunch\b|\bplay\b|\bsearch\b|\bgoogle\b)/i,
   hybridMixed: /(\bsearch\b|\bgoogle\b|\bexplain\b|\bcompare\b|\bfind\b|\bteach\b|\bsummarize\b)/i,
+  semanticSearchIndicators: /\b(google|search|find|find information|look up|lookup)\b/i,
+  openVerbPrefix: /^(open|launch|start|run|go to)\s+/i,
 };
 
 export function isExecutionRuntimeMode(mode: RuntimeMode): boolean {
@@ -133,6 +136,12 @@ function detectSemanticFactualIntent(normalizedInput: string): RuntimeModeClassi
   if (!extraction) {
     return null;
   }
+
+  const hasSearchIndicators = PRECOMPILED_REGEX.semanticSearchIndicators.test(normalizedInput);
+  const hasFactualAttribute = containsFactualAttribute(extraction.query);
+  if ((!hasSearchIndicators && !hasFactualAttribute) || PRECOMPILED_REGEX.openVerbPrefix.test(normalizedInput)) {
+    return null;
+  }
   const classification: RuntimeModeClassification = {
     mode: "execution",
     normalizedInput,
@@ -156,12 +165,10 @@ function detectExecutionIntent(normalizedInput: string): RuntimeModeClassificati
   if (fastCommand) {
     const intent =
       fastCommand.kind === "open_url" || fastCommand.kind === "browser_home" || fastCommand.kind === "youtube"
-        ? "web_navigation"
+        ? IntentEnum.BROWSER_SEARCH
         : fastCommand.kind === "open_app"
-          ? "application_launch"
-          : fastCommand.kind === "open_path" || fastCommand.kind === "open_downloads"
-            ? "system_command"
-            : "system_command";
+          ? IntentEnum.APP_LAUNCH
+          : IntentEnum.SYSTEM_ACTION;
 
     let executionSource: "alias" | "semantic-search" | "direct-launch" | "system-command" = "system-command";
     if (fastCommand.kind === "open_app" || fastCommand.kind === "youtube" || fastCommand.kind === "close_app") {
@@ -207,10 +214,10 @@ function detectExecutionIntent(normalizedInput: string): RuntimeModeClassificati
   }
 
   const intent = PRECOMPILED_REGEX.webNavigationIntent.test(normalizedInput)
-    ? "web_navigation"
+    ? IntentEnum.BROWSER_SEARCH
     : PRECOMPILED_REGEX.appLaunchIntent.test(normalizedInput)
-      ? "application_launch"
-      : "system_command";
+      ? IntentEnum.APP_LAUNCH
+      : IntentEnum.SYSTEM_ACTION;
 
   let executionSource: "alias" | "semantic-search" | "direct-launch" | "system-command" = "system-command";
   if (PRECOMPILED_REGEX.screenshot.test(normalizedInput)) {
@@ -340,6 +347,7 @@ export function classifyRuntimeMode(input: string): RuntimeModeClassification {
       confidence: 0.91,
       reason: "conversational-pattern",
       detectedModes: ["conversational"],
+      intent: IntentEnum.CONVERSATION,
     };
     logPerf(log, "classifyRuntimeMode completed", startedAt, { mode: result.mode });
     return result;
@@ -351,6 +359,7 @@ export function classifyRuntimeMode(input: string): RuntimeModeClassification {
     confidence: 0.55,
     reason: "default-conversational",
     detectedModes: ["conversational"],
+    intent: IntentEnum.CONVERSATION,
   };
   logPerf(log, "classifyRuntimeMode completed", startedAt, { mode: fallback.mode });
   return fallback;

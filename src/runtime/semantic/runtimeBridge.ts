@@ -1,88 +1,148 @@
-// src/runtime/semantic/runtimeBridge.ts
 import type { SemanticPayload } from "./semanticPayload.js";
+import { IntentEnum } from "./semanticTypes.js";
+import { selectBestRoute, type RouteSelection } from "./routeSelector.js";
+import { RuntimeRouteEnum } from "./routeTypes.js";
+import { createLogger } from "@utils/logger.js";
+import { RuntimeCommand } from "../runtimeCommand.js";
+import { IS_RUNTIME_DEBUG } from "@utils/perf.js";
 
-/** Validation result for SemanticPayload */
+const log = createLogger("runtime/semantic/runtimeBridge");
+
 export interface ValidationResult {
   valid: boolean;
   reason?: string;
 }
 
-/** Validate a SemanticPayload and return a structured result. */
-export function validateSemanticPayload(payload: SemanticPayload): ValidationResult {
-  if (!payload) return { valid: false, reason: "payload missing" };
-  if (typeof payload.originalInput !== "string") return { valid: false, reason: "originalInput must be string" };
-  if (typeof payload.intent !== "string") return { valid: false, reason: "intent must be string" };
-  if (typeof payload.confidence !== "number" || payload.confidence < 0 || payload.confidence > 1) return { valid: false, reason: "confidence out of range" };
-  if (!["deterministic", "validation", "conversation"].includes(payload.executionMode)) return { valid: false, reason: "invalid executionMode" };
-  return { valid: true };
-}
-
-// Types moved to semanticTypes module
-import { IntentEnum, ExecutionModeEnum, SemanticResult, SemanticIntent } from "./semanticTypes.js";
-import { selectBestRoute, RouteSelection } from "./routeSelector.js";
-import { RuntimeRouteEnum } from "./routeTypes.js";
-import { createLogger } from "@utils/logger.js";
-import { RouteTrace } from "./routeTrace.js";
-import { RuntimeCommand } from "../runtimeCommand.js";
-
-/**
- * Maps a validated SemanticPayload to a runtime execution specification.
- * The spec is deliberately lightweight – just a command string and optional args.
- */
 export interface RuntimeExecutionSpec {
   command: RuntimeCommand;
   args?: Record<string, unknown>;
+  route: RuntimeRouteEnum;
 }
 
-/**
- * Build a RuntimeExecutionSpec based on a selected route.
- * No mutation of the original payload occurs.
- */
-function buildSpecFromSelection(payload: SemanticPayload, selection: RouteSelection): RuntimeExecutionSpec {
-  switch (selection.route) {
-    case RuntimeRouteEnum.WEB_SEARCH:
-      return { command: RuntimeCommand.WEB_SEARCH, args: { query: payload.query } };
-    case RuntimeRouteEnum.WEB_NAVIGATION:
-      return { command: RuntimeCommand.WEB_NAVIGATION, args: { url: payload.target } };
-    case RuntimeRouteEnum.APPLICATION_LAUNCH:
-      return { command: RuntimeCommand.APPLICATION_LAUNCH, args: { appName: payload.target } };
-    case RuntimeRouteEnum.SYSTEM_COMMAND:
-      return { command: RuntimeCommand.SYSTEM_COMMAND, args: { raw: payload.originalInput } };
-    case RuntimeRouteEnum.CONVERSATION:
+export interface ExecutionTrace {
+  input: string;
+  extractedQuery?: string;
+  intent: string;
+  confidence: number;
+  route: RuntimeRouteEnum;
+  command: RuntimeCommand;
+  tool: string;
+  success: boolean;
+  response: string;
+}
+
+export function validateSemanticPayload(payload: SemanticPayload): ValidationResult {
+  if (!payload) return { valid: false, reason: "payload missing" };
+  if (typeof payload.originalInput !== "string" || payload.originalInput.trim().length === 0) {
+    return { valid: false, reason: "originalInput must be non-empty string" };
+  }
+  if (typeof payload.intent !== "string") return { valid: false, reason: "intent must be string" };
+  if (typeof payload.confidence !== "number" || payload.confidence < 0 || payload.confidence > 1) {
+    return { valid: false, reason: "confidence out of range" };
+  }
+  return { valid: true };
+}
+
+export function validateRouteCommandAlignment(
+  intent: IntentEnum,
+  route: RuntimeRouteEnum,
+): { route: RuntimeRouteEnum; command: RuntimeCommand } {
+  switch (intent) {
+    case IntentEnum.BROWSER_SEARCH:
+    case IntentEnum.INFORMATION_SEARCH:
+      if (route !== RuntimeRouteEnum.WEB_SEARCH) {
+        log.warn("Route and intent mismatch corrected", { intent, from: route, to: RuntimeRouteEnum.WEB_SEARCH });
+      }
+      return { route: RuntimeRouteEnum.WEB_SEARCH, command: RuntimeCommand.WEB_SEARCH };
+    case IntentEnum.CONVERSATION:
+      if (route !== RuntimeRouteEnum.CONVERSATION) {
+        log.warn("Route and intent mismatch corrected", { intent, from: route, to: RuntimeRouteEnum.CONVERSATION });
+      }
+      return { route: RuntimeRouteEnum.CONVERSATION, command: RuntimeCommand.CHAT };
+    case IntentEnum.APP_LAUNCH:
+      if (route !== RuntimeRouteEnum.APPLICATION_LAUNCH) {
+        log.warn("Route and intent mismatch corrected", { intent, from: route, to: RuntimeRouteEnum.APPLICATION_LAUNCH });
+      }
+      return { route: RuntimeRouteEnum.APPLICATION_LAUNCH, command: RuntimeCommand.APPLICATION_LAUNCH };
+    case IntentEnum.SYSTEM_ACTION:
+      if (route !== RuntimeRouteEnum.SYSTEM_COMMAND) {
+        log.warn("Route and intent mismatch corrected", { intent, from: route, to: RuntimeRouteEnum.SYSTEM_COMMAND });
+      }
+      return { route: RuntimeRouteEnum.SYSTEM_COMMAND, command: RuntimeCommand.SYSTEM_COMMAND };
     default:
-      return { command: RuntimeCommand.CHAT, args: { input: payload.originalInput } };
+      return { route, command: RuntimeCommand.CHAT };
   }
 }
 
-/**
- * Public API: map a SemanticPayload to a RuntimeExecutionSpec.
- * Internally it validates the payload, selects the best route, optionally
- * creates a trace for observability, and then builds the spec.
- */
+export function validateCommand(command: RuntimeCommand, args?: Record<string, unknown>): ValidationResult {
+  switch (command) {
+    case RuntimeCommand.WEB_SEARCH:
+      return typeof args?.query === "string" && args.query.trim().length > 0
+        ? { valid: true }
+        : { valid: false, reason: "WEB_SEARCH requires query" };
+    case RuntimeCommand.CHAT:
+      return typeof args?.input === "string" && args.input.trim().length > 0
+        ? { valid: true }
+        : { valid: false, reason: "CHAT requires input" };
+    case RuntimeCommand.APPLICATION_LAUNCH:
+      return typeof args?.appName === "string" && args.appName.trim().length > 0
+        ? { valid: true }
+        : { valid: false, reason: "APPLICATION_LAUNCH requires target" };
+    case RuntimeCommand.SYSTEM_COMMAND:
+      return typeof args?.raw === "string" && args.raw.trim().length > 0
+        ? { valid: true }
+        : { valid: false, reason: "SYSTEM_COMMAND requires action" };
+    case RuntimeCommand.WEB_NAVIGATION:
+      return typeof args?.url === "string" && args.url.trim().length > 0
+        ? { valid: true }
+        : { valid: false, reason: "WEB_NAVIGATION requires url" };
+    default:
+      return { valid: false, reason: "Unknown runtime command" };
+  }
+}
+
+function buildSpecFromSelection(payload: SemanticPayload, selection: RouteSelection): RuntimeExecutionSpec {
+  const aligned = validateRouteCommandAlignment(payload.intent, selection.route);
+  switch (aligned.command) {
+    case RuntimeCommand.WEB_SEARCH:
+      return { command: aligned.command, route: aligned.route, args: { query: payload.query } };
+    case RuntimeCommand.WEB_NAVIGATION:
+      return { command: aligned.command, route: aligned.route, args: { url: payload.target } };
+    case RuntimeCommand.APPLICATION_LAUNCH:
+      return { command: aligned.command, route: aligned.route, args: { appName: payload.target } };
+    case RuntimeCommand.SYSTEM_COMMAND:
+      return { command: aligned.command, route: aligned.route, args: { raw: payload.originalInput } };
+    default:
+      return { command: RuntimeCommand.CHAT, route: RuntimeRouteEnum.CONVERSATION, args: { input: payload.originalInput } };
+  }
+}
+
 export function mapIntentToSpec(payload: SemanticPayload): RuntimeExecutionSpec {
-  // Validation – already lightweight, but keep separation.
   const validation = validateSemanticPayload(payload);
   if (!validation.valid) {
-    // In production we would throw or handle the error; for now fallback.
     throw new Error(validation.reason ?? "Invalid SemanticPayload");
   }
 
-  // Route selection – deterministic, side‑effect free.
   const selection = selectBestRoute(payload);
+  const spec = buildSpecFromSelection(payload, selection);
+  const commandValidation = validateCommand(spec.command, spec.args);
+  if (!commandValidation.valid) {
+    throw new Error(commandValidation.reason ?? "Invalid runtime command");
+  }
 
-  // Optional trace for debugging / observability (no persistence).
-  const trace: RouteTrace = {
-    requestId: payload.metadata?.normalizedInput ?? `req-${Date.now()}`,
-    selectedRoute: selection.route,
-    confidence: selection.confidence,
-    alternatives: selection.alternatives,
-    executionMode: payload.executionMode,
-    timestamp: Date.now(),
-  };
-  // Simple console log – replace with proper logger if needed.
-  const log = createLogger("runtime/semantic/runtimeBridge");
-  log.debug("Route trace", { ...trace });
+  if (IS_RUNTIME_DEBUG) {
+    log.info("ExecutionTrace", {
+      input: payload.originalInput,
+      extractedQuery: payload.query,
+      intent: payload.intent,
+      confidence: payload.confidence,
+      route: spec.route,
+      command: spec.command,
+      tool: spec.command,
+      success: true,
+      response: "spec-generated",
+    } satisfies ExecutionTrace);
+  }
 
-  // Build the final spec without mutating the payload.
-  return buildSpecFromSelection(payload, selection);
+  return spec;
 }

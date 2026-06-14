@@ -141,9 +141,22 @@ async function executeDeterministicSearch(state: GraphState): Promise<string | n
     }
     return feedback;
   } catch (err) {
-    const formattedError = formatErrorForUser(err);
-    state.onToken?.(formattedError);
-    throw new Error(formattedError);
+    log.warn("Deterministic search failed, running fallback recovery...", { error: String(err) });
+    try {
+      const fallbackBaseUrl = route.provider === "youtube" ? "https://www.youtube.com" : "https://www.google.com";
+      if (route.browser) {
+        await openUrlInBrowser(route.browser, fallbackBaseUrl);
+        await openUrlInBrowser(route.browser, route.url);
+      } else {
+        await openUrl(fallbackBaseUrl);
+        await openUrl(route.url);
+      }
+      return `Primary search tool failed. Recovered using fallback: searching ${providerName} for "${route.query}"...`;
+    } catch (fallbackErr) {
+      const formattedError = formatErrorForUser(fallbackErr);
+      state.onToken?.(formattedError);
+      throw new Error(formattedError);
+    }
   }
 }
 
@@ -344,7 +357,8 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
 
       if (state.intent === IntentEnum.CONVERSATION || state.intent === "chat") {
         const { dispatchTool } = await import("../tools/dispatcher.js");
-        const response = await dispatchTool(RuntimeCommand.CHAT, { input: state.currentInput }) as string;
+        const chatResult = await dispatchTool(RuntimeCommand.CHAT, { input: state.currentInput }) as { success?: boolean; response?: string };
+        const response = chatResult?.response?.trim() || "I'm here.";
         addMessage("assistant", response, state.channel);
         return { ...state, response, currentStep: "done" };
       }
@@ -364,6 +378,41 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
         }
         addMessage("assistant", directResponse, state.channel);
         return { ...state, response: directResponse, currentStep: "done" };
+      }
+
+      if (state.intent === IntentEnum.BROWSER_SEARCH) {
+        const extraction = extractQuery(state.currentInput);
+        const query = extraction?.query?.trim();
+        if (query) {
+          const { dispatchTool } = await import("../tools/dispatcher.js");
+          try {
+            const searchResult = await dispatchTool(RuntimeCommand.WEB_SEARCH, { query }) as { success?: boolean; response?: string };
+            if (searchResult && searchResult.success !== false) {
+              const response = searchResult.response?.trim() || `Searching Google for "${query}"...`;
+              addMessage("assistant", response, state.channel);
+              return { ...state, response, currentStep: "done" };
+            }
+            throw new Error(searchResult?.response || "Search tool returned failure");
+          } catch (err) {
+            log.warn("WEB_SEARCH dispatch failed, running fallback recovery...", { error: String(err) });
+            try {
+              const fallbackUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+              await openUrl("https://www.google.com");
+              await openUrl(fallbackUrl);
+              const recoveryMsg = `Primary search tool failed. Recovered using fallback: searching Google for "${query}"...`;
+              addMessage("assistant", recoveryMsg, state.channel);
+              return { ...state, response: recoveryMsg, currentStep: "done" };
+            } catch (fallbackErr) {
+              const formattedError = `Failed to execute search. ${formatErrorForUser(fallbackErr)}`;
+              addMessage("assistant", formattedError, state.channel);
+              return { ...state, response: formattedError, currentStep: "error" };
+            }
+          }
+        }
+
+        const invalidSearchMessage = "I couldn't extract a valid search query from that request.";
+        addMessage("assistant", invalidSearchMessage, state.channel);
+        return { ...state, response: invalidSearchMessage, currentStep: "error" };
       }
 
       const normalized = state.currentInput.toLowerCase();
@@ -442,7 +491,7 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
         return { ...state, response: successMsg, currentStep: "done" };
       }
 
-      const fallbackMsg = "Task completed (deterministic execution bypass).";
+      const fallbackMsg = "I couldn't determine a concrete action to execute.";
       log.info("DIRECT LAUNCH EXECUTED");
       log.info("TOOL EXECUTION COMPLETE", { tool: "fallback", result: fallbackMsg });
       if (IS_RUNTIME_DEBUG) {

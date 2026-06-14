@@ -1,50 +1,48 @@
-/*
- * src/runtime/semantic/queryExtractor.ts
- *
- * Extracts a factual query string from user input for the semantic extraction layer.
- * Returns the extracted query or null if none matches.
- */
-
 export interface QueryExtractionResult {
-  /** The extracted query phrase without surrounding verbs */
   query: string;
-  /** The original matched pattern name (for debugging) */
   patternName: string;
 }
 
-// Simple patterns covering common fact‑question forms.
-const patterns: Record<string, RegExp> = {
-  // e.g., "tell me virat kohli age"
-  tellMeAge: /^(?:tell me|what is|who is|show me|find|search for|give me|look up)\s+(.+?)\s+(?:age|birthday|date of birth)$/i,
-  // generic definition: "what is AI"
-  definition: /^(?:what is|who is|define|explain)\s+(.+)$/i,
-  // generic fact: "who is the president of india"
-  genericFact: /^(?:who is|what is|give me|show me)\s+(.+)$/i,
-};
+const PLATFORM_SUFFIX_REGEX = /\s+(?:on\s+(?:google|youtube|bing|chrome)|from\s+(?:google|youtube)|online|offline)\s*$/i;
+const LEADING_HELPER_REGEX = /^(?:can you tell me|please tell me|tell me|what is|who is|search|find|lookup|look up|show me|give me)\s+/i;
+const TRAILING_HELPER_REGEX = /\s+(?:search it|google it|look it up|search)\s*$/i;
+const PLATFORM_ONLY_REGEX = /^(?:google|youtube|bing|chrome|online|offline)$/i;
+const HELPER_ONLY_REGEX = /^(?:tell me|what is|who is|search|find|lookup|look up|show me|give me|can you tell me|please tell me)$/i;
 
-function cleanQuerySuffixes(input: string): string {
-  return input
-    .replace(/\s+on\s+(google|youtube)$/i, "")
-    .replace(/\s+online$/i, "")
-    .trim();
+export function normalizePlatformSuffix(input: string): string {
+  return input.replace(PLATFORM_SUFFIX_REGEX, "");
 }
 
-/**
- * Attempts to extract the core query from raw input.
- * Returns null when no pattern matches.
- */
-export function extractQuery(rawInput: string): QueryExtractionResult | null {
-  const cleanedInput = cleanQuerySuffixes(rawInput);
-  const trimmed = cleanedInput.trim();
-  for (const [name, regex] of Object.entries(patterns)) {
-    const match = regex.exec(trimmed);
-    if (match && match[1]) {
-      return {
-        query: match[1].trim(),
-        patternName: name,
-      };
-    }
+export function removeHelperWords(input: string): string {
+  return input.replace(LEADING_HELPER_REGEX, "").replace(TRAILING_HELPER_REGEX, "");
+}
+
+export function normalizeSpacing(input: string): string {
+  return input.replace(/\s+/g, " ").trim();
+}
+
+export function isValidSearchQuery(query: string): boolean {
+  const normalized = normalizeSpacing(query);
+  if (normalized.length <= 2) {
+    return false;
   }
-  return null;
+  if (HELPER_ONLY_REGEX.test(normalized) || PLATFORM_ONLY_REGEX.test(normalized)) {
+    return false;
+  }
+  return true;
 }
 
+export function extractQuery(rawInput: string): QueryExtractionResult | null {
+  const withoutPlatformSuffix = normalizePlatformSuffix(rawInput);
+  const withoutHelpers = removeHelperWords(withoutPlatformSuffix);
+  const normalized = normalizeSpacing(withoutHelpers);
+
+  if (!isValidSearchQuery(normalized)) {
+    return null;
+  }
+
+  return {
+    query: normalized,
+    patternName: "normalization-pipeline",
+  };
+}

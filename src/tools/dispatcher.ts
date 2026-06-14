@@ -6,6 +6,8 @@ import * as launcherTools from "./laptop/launcher.js";
 import { ToolError } from "@utils/errorHandler.js";
 import { createLogger } from "@utils/logger.js";
 import { IS_RUNTIME_DEBUG, logPerf, nowMs } from "@utils/perf.js";
+import { RuntimeCommand } from "../runtime/runtimeCommand.js";
+import { validateCommand } from "../runtime/semantic/runtimeBridge.js";
 
 const log = createLogger("tools/dispatcher");
 
@@ -93,8 +95,6 @@ const HEAVY_TOOL_LOADERS: Record<string, () => Promise<ToolHandler>> = {
   },
 };
 
-import { RuntimeCommand } from "../runtime/runtimeCommand.js";
-
 const heavyToolCache = new Map<string, ToolHandler>();
 
 export async function dispatchTool(toolId: string, params: ToolParams): Promise<ToolResult> {
@@ -109,6 +109,10 @@ export async function dispatchTool(toolId: string, params: ToolParams): Promise<
 
   // Handle standardized RuntimeCommands
   if (toolId === RuntimeCommand.CHAT) {
+    const validation = validateCommand(RuntimeCommand.CHAT, params);
+    if (!validation.valid) {
+      return { success: false, response: validation.reason ?? "Invalid chat command" };
+    }
     const { chat } = await import("../llm/client.js");
     const { SYSTEM_PROMPT } = await import("../llm/prompts.js");
     const { GenerationPresets, Models } = await import("../config/models.js");
@@ -121,15 +125,25 @@ export async function dispatchTool(toolId: string, params: ToolParams): Promise<
       messages,
       options: GenerationPresets.conversational
     });
-    return response;
+    return { success: true, response };
   }
 
   if (toolId === RuntimeCommand.WEB_SEARCH) {
+    const validation = validateCommand(RuntimeCommand.WEB_SEARCH, params);
+    if (!validation.valid) {
+      return { success: false, response: validation.reason ?? "Invalid web search command" };
+    }
     const { openUrl } = await import("./laptop/launcher.js");
     const query = params.query as string;
     const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
-    await openUrl(url);
-    return `Searching Google for "${query}"...`;
+    try {
+      await openUrl(url);
+      return { success: true, response: `Searching Google for "${query}"...` };
+    } catch {
+      await openUrl("https://www.google.com");
+      await openUrl(url);
+      return { success: true, response: `Searching Google for "${query}"...` };
+    }
   }
 
   try {

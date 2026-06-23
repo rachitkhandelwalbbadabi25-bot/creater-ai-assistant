@@ -68,7 +68,7 @@ function quickKeywordRoute(message: string): IntentResult | null {
   if (msg.match(/\b(hi|hello|hey|how are you|good morning|good evening)\b/))
     return { intent: IntentEnum.CONVERSATION, confidence: 0.95, entities: {} };
   // Emotional support / empathy
-  if (msg.match(/\b(sad|happy|angry|upset|stress|anxious)\b/))
+  if (msg.match(/\b(sad|happy|angry|upset|stress|stressed|anxious|anxiety|depressed|depression|tired|lonely|alone|hopeless|overwhelmed|burnout|excited|grateful|mood|feel|feeling|nobody understands|emotional patterns?|emotion profile|emotion history)\b/))
     return { intent: "emotion_support", confidence: 0.9, entities: {} };
   // Technical discussion / code related
   if (msg.match(/\b(code|bug|error|function|class|import|typescript|javascript)\b/))
@@ -209,5 +209,5 @@ function getPresetKeyForIntent(intent: string): keyof typeof GenerationPresets {
 export async function quickIntent(message: string): Promise<string> {
   const result = await classifyIntent(message);
   if (result.ok) return result.value.intent;
-  return "unknown";
+  return IntentEnum.CONVERSATION; // fallback to conversation intent
 }

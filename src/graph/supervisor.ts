@@ -11,6 +11,7 @@ import { logMemorySnapshot } from "@utils/memory.js";
 import { IS_RUNTIME_DEBUG, logPerf, nowMs } from "@utils/perf.js";
 import { ExecutionModeEnum, IntentEnum } from "../runtime/semantic/semanticTypes.js";
 import { normalizeIntent } from "../runtime/semantic/intentDetector.js";
+import { addMessage } from "@memory/shortTerm.js";
 const log = createLogger("graph/supervisor");
 
 
@@ -26,6 +27,26 @@ const AGENTS: Record<string, AgentNode> = {
   projectAgent: projectAgentNode,
   skillAgent: skillAgentNode,
 };
+
+function getDeterministicConversationReply(input: string): string | null {
+  const normalized = input.trim().toLowerCase().replace(/[!.?]+$/g, "");
+  const replies: Record<string, string> = {
+    hi: "Hi! How can I help?",
+    hello: "Hello! How can I help?",
+    hey: "Hey! How can I help?",
+    "good morning": "Good morning! How can I help?",
+    "good night": "Good night! Rest well.",
+    thanks: "You're welcome.",
+    "thank you": "You're welcome.",
+  };
+
+  return replies[normalized] ?? null;
+}
+
+function persistDeterministicConversation(input: string, response: string, channel: GraphState["channel"]): void {
+  addMessage("user", input, channel, { intent: "conversation" });
+  addMessage("assistant", response, channel);
+}
 
 async function routeConversationalState(state: GraphState): Promise<GraphState> {
   const { routerNode } = await import("./router.js");
@@ -81,7 +102,8 @@ async function routeExecutionState(
     return result;
   }
 
-  const routedState = await routeConversationalState(state);
+  // Set intent to conversation for non‑execution modes to avoid UNKNOWN logs
+  const routedState = await routeConversationalState({ ...state, intent: IntentEnum.CONVERSATION });
   if (IS_RUNTIME_DEBUG) {
     log.info(`Routed -> agent=${routedState.targetAgent}, intent=${routedState.intent}, mood=${routedState.mood}`);
   }
@@ -109,6 +131,23 @@ export async function processMessageStreaming(
     state.onToken = onToken;
     if (IS_RUNTIME_DEBUG) {
       log.info(`Processing (stream): "${input.slice(0, 80)}..." [${channel}]`);
+    }
+
+    const deterministicReply = getDeterministicConversationReply(input);
+    if (deterministicReply) {
+      state.response = deterministicReply;
+      state.intent = IntentEnum.CONVERSATION;
+      state.targetAgent = "deterministic";
+      state.currentStep = "done";
+      persistDeterministicConversation(input, deterministicReply, channel);
+      onToken?.(deterministicReply);
+      logPerf(log, "processMessageStreaming completed", startTime, {
+        agent: state.targetAgent,
+        intent: state.intent,
+        responseLen: state.response.length,
+        bypass: "deterministic_conversation",
+      });
+      return deterministicReply;
     }
 
     const routed = await routeExecutionState(state, input);
@@ -166,6 +205,22 @@ export async function processMessage(
 
     if (IS_RUNTIME_DEBUG) {
       log.info(`Processing: "${input.slice(0, 80)}..." [${channel}]`);
+    }
+
+    const deterministicReply = getDeterministicConversationReply(input);
+    if (deterministicReply) {
+      state.response = deterministicReply;
+      state.intent = IntentEnum.CONVERSATION;
+      state.targetAgent = "deterministic";
+      state.currentStep = "done";
+      persistDeterministicConversation(input, deterministicReply, channel);
+      logPerf(log, "processMessage completed", startTime, {
+        agent: state.targetAgent,
+        intent: state.intent,
+        responseLen: state.response.length,
+        bypass: "deterministic_conversation",
+      });
+      return deterministicReply;
     }
 
     const routed = await routeExecutionState(state, input);

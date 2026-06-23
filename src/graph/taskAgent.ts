@@ -4,26 +4,46 @@
 
 import type { GraphState } from "./state.js";
 import { chat, chatStream, type ChatMessage } from "@llm/client.js";
-import { SYSTEM_PROMPT } from "@llm/prompts.js";
+import { OPTIMIZED_SYSTEM_PROMPT } from "@llm/prompts.js";
 import { GenerationPresets } from "@config/models.js";
-import { addMessage, getChatHistory } from "@memory/shortTerm.js";
+import { DEFAULT_NUM_CTX } from "@llm/constants.js";
+import { getNumPredict } from "@llm/tokenBudget.js";
+import { addMessage, getChannelChatHistory } from "@memory/shortTerm.js";
 import { createLogger } from "@utils/logger.js";
 
 const log = createLogger("graph/taskAgent");
 
+function trimHistoryContent(content: string): string {
+  return content.length > 500 ? `${content.slice(0, 500)}...` : content;
+}
+
 export async function taskAgentNode(state: GraphState): Promise<GraphState> {
   log.info(`TaskAgent handling intent: ${state.intent}`);
 
-  const history = getChatHistory(8);
+  const isConversational = state.intent === "chitchat" || state.intent === "conversation";
+  const historyLimit = isConversational ? 2 : state.memoryRetrieved ? 4 : 2;
+  const history = getChannelChatHistory(state.channel, historyLimit);
+
+  // For conversational intents, instruct brevity
+  const brevityHint = isConversational
+    ? " Keep your response under 80 words unless the user explicitly asks for detail."
+    : "";
+  const systemContent = [OPTIMIZED_SYSTEM_PROMPT + brevityHint, state.contextBlock].filter(Boolean).join("\n\n");
+
   const messages: ChatMessage[] = [
-    { role: "system", content: `${SYSTEM_PROMPT}\n\n${state.contextBlock}` },
-    ...history.map(m => ({ role: m.role as ChatMessage["role"], content: m.content })),
+    { role: "system", content: systemContent },
+    ...history.map(m => ({ role: m.role as ChatMessage["role"], content: trimHistoryContent(m.content) })),
     { role: "user", content: state.currentInput },
   ];
 
+  const numPredict = getNumPredict(state.intent);
   const preset = state.intent.includes("code") ? GenerationPresets.coding
-    : (state.intent === "chitchat" || state.intent === "conversation") ? GenerationPresets.conversational
+    : isConversational ? GenerationPresets.conversational
     : GenerationPresets.precise;
+
+  // num_ctx: limit context window to 2048 tokens — dramatically reduces prefill
+  // time on CPU (default 8192 = 4x slower TTFT for no benefit on short chats)
+  const ctxOptions = { ...preset, num_predict: numPredict, num_ctx: DEFAULT_NUM_CTX };
 
   let response = "";
   if (state.onToken) {
@@ -31,7 +51,7 @@ export async function taskAgentNode(state: GraphState): Promise<GraphState> {
       {
         model: state.selectedModel,
         messages,
-        options: preset,
+        options: ctxOptions,
       },
       state.onToken
     );
@@ -39,7 +59,7 @@ export async function taskAgentNode(state: GraphState): Promise<GraphState> {
     response = await chat({
       model: state.selectedModel,
       messages,
-      options: preset,
+      options: ctxOptions,
     });
   }
 

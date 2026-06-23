@@ -27,7 +27,8 @@
       "@tui/*": ["src/tui/*"],
       "@bot/*": ["src/bot/*"],
       "@utils/*": ["src/utils/*"],
-      "@conversation/*": ["src/conversation/*"]
+      "@conversation/*": ["src/conversation/*"],
+      "onnxruntime-web": ["node_modules/onnxruntime-node"]
     },
     "types": ["bun-types"]
   },

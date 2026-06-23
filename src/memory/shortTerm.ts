@@ -2,7 +2,7 @@
 // src/memory/shortTerm.ts — Short-term memory: recent conversation messages
 // ════════════════════════════════════════════════════════════════════════════════
 
-import { db } from "./db.js";
+import { getDB } from "./db.js";
 import { createLogger } from "@utils/logger.js";
 import { generateId, estimateTokens } from "@utils/helpers.js";
 import { env } from "@config/index.js";
@@ -22,33 +22,45 @@ export interface Message {
 }
 
 // ─── Prepared Statements (cached for performance) ─────────────────────────────────
-const insertStmt = db.prepare(`
-  INSERT INTO messages (id, role, content, channel, emotion, intent, tokens_estimated, expires_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+' || ? || ' hours'))
-`);
+let preparedStatements: {
+  insertStmt: any;
+  recentStmt: any;
+  byChannelStmt: any;
+  deleteExpiredStmt: any;
+  countStmt: any;
+} | undefined;
 
-const recentStmt = db.prepare(`
-  SELECT * FROM messages
-  WHERE (expires_at IS NULL OR expires_at > datetime('now'))
-  ORDER BY created_at DESC
-  LIMIT ?
-`);
-
-const byChannelStmt = db.prepare(`
-  SELECT * FROM messages
-  WHERE channel = ? AND (expires_at IS NULL OR expires_at > datetime('now'))
-  ORDER BY created_at DESC
-  LIMIT ?
-`);
-
-const deleteExpiredStmt = db.prepare(`
-  DELETE FROM messages WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')
-`);
-
-const countStmt = db.prepare(`
-  SELECT COUNT(*) as count FROM messages
-  WHERE (expires_at IS NULL OR expires_at > datetime('now'))
-`);
+function statements() {
+  if (!preparedStatements) {
+    const db = getDB();
+    preparedStatements = {
+      insertStmt: db.prepare(`
+        INSERT INTO messages (id, role, content, channel, emotion, intent, tokens_estimated, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+' || ? || ' hours'))
+      `),
+      recentStmt: db.prepare(`
+        SELECT * FROM messages
+        WHERE (expires_at IS NULL OR expires_at > datetime('now'))
+        ORDER BY created_at DESC
+        LIMIT ?
+      `),
+      byChannelStmt: db.prepare(`
+        SELECT * FROM messages
+        WHERE channel = ? AND (expires_at IS NULL OR expires_at > datetime('now'))
+        ORDER BY created_at DESC
+        LIMIT ?
+      `),
+      deleteExpiredStmt: db.prepare(`
+        DELETE FROM messages WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')
+      `),
+      countStmt: db.prepare(`
+        SELECT COUNT(*) as count FROM messages
+        WHERE (expires_at IS NULL OR expires_at > datetime('now'))
+      `),
+    };
+  }
+  return preparedStatements;
+}
 
 // ─── Operations ───────────────────────────────────────────────────────────────────
 
@@ -65,7 +77,7 @@ export function addMessage(
   const tokens = estimateTokens(content);
   const ttl = env.SHORT_TERM_TTL_HOURS;
 
-  insertStmt.run(
+  statements().insertStmt.run(
     id, role, content, channel,
     metadata?.emotion ?? null,
     metadata?.intent ?? null,
@@ -92,14 +104,14 @@ export function addMessage(
  * Get recent messages (newest first).
  */
 export function getRecentMessages(limit = 20): Message[] {
-  return recentStmt.all(limit) as Message[];
+  return statements().recentStmt.all(limit) as Message[];
 }
 
 /**
  * Get recent messages for a specific channel (tui, telegram, web).
  */
 export function getChannelMessages(channel: string, limit = 20): Message[] {
-  return byChannelStmt.all(channel, limit) as Message[];
+  return statements().byChannelStmt.all(channel, limit) as Message[];
 }
 
 /**
@@ -113,11 +125,18 @@ export function getChatHistory(limit = 10): Array<{ role: string; content: strin
     .map((m) => ({ role: m.role, content: m.content }));
 }
 
+export function getChannelChatHistory(channel: string, limit = 10): Array<{ role: string; content: string }> {
+  const messages = getChannelMessages(channel, limit);
+  return messages
+    .reverse()
+    .map((m) => ({ role: m.role, content: m.content }));
+}
+
 /**
  * Get total active message count.
  */
 export function getMessageCount(): number {
-  const result = countStmt.get() as { count: number };
+  const result = statements().countStmt.get() as { count: number };
   return result.count;
 }
 
@@ -125,7 +144,7 @@ export function getMessageCount(): number {
  * Clean up expired messages. Called periodically.
  */
 export function cleanExpired(): number {
-  const result = deleteExpiredStmt.run();
+  const result = statements().deleteExpiredStmt.run();
   if (result.changes > 0) {
     log.info(`Cleaned ${result.changes} expired messages`);
   }

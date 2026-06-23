@@ -18,12 +18,21 @@ export interface MLEmotionResult {
 }
 
 // ─── Model State ──────────────────────────────────────────────────────────────────
+const isBun = typeof (globalThis as any).Bun !== "undefined";
+const isWindows = process.platform === "win32";
+const disableMLOnBunWindows = isBun && isWindows;
+
 let classifier: any = null;
 let isLoading = false;
-export let mlAvailable = true;
+let hasAttemptedLoad = disableMLOnBunWindows;
+export let mlAvailable = false; // stays false until model successfully loads
+
+if (disableMLOnBunWindows) {
+  log.info("Bun on Windows detected. Bypassing local ML emotion model to prevent native ONNX runtime hangs/deadlocks.");
+}
 
 export function isMLAvailable(): boolean {
-  return mlAvailable;
+  return mlAvailable || !hasAttemptedLoad;
 }
 
 // Label mapping: transformer output labels → our Mood types
@@ -83,7 +92,7 @@ const MOOD_ENERGY: Record<Mood, EnergyLevel> = {
  */
 async function getClassifier(): Promise<any> {
   if (classifier) return classifier;
-  if (!mlAvailable) return null;
+  if (hasAttemptedLoad && !classifier) return null;
   if (isLoading) {
     // Wait for in-progress load
     while (isLoading) await new Promise((r) => setTimeout(r, 100));
@@ -91,17 +100,22 @@ async function getClassifier(): Promise<any> {
   }
 
   isLoading = true;
+  hasAttemptedLoad = true;
   try {
     log.info("Loading emotion classifier model...");
     
-    // Dynamic import and pipeline initialization with a 5 seconds timeout
+    // Dynamic import and pipeline initialization
     const loadPromise = (async () => {
-      const { pipeline } = await import("@xenova/transformers");
+      const { pipeline, env: tfEnv } = await import("@xenova/transformers");
+      // Point to the correct HuggingFace Hub CDN and allow local cache first
+      tfEnv.remoteHost = "https://huggingface.co/";
+      tfEnv.remotePathTemplate = "{model}/resolve/{revision}/";
+      tfEnv.allowLocalModels = true;
       return await pipeline(
         "text-classification",
-        "SamLowe/roberta-base-go_emotions",
+        "SamLowe/roberta-base-go_emotions-onnx",
         { 
-          quantized: true, // Use quantized (int8) for speed
+          quantized: true, // Use the 125MB quantized model
           progress_callback: (info: any) => {
             if (info.status === "progress") {
               log.info(`Downloading Emotion model... ${(info.progress as number).toFixed(1)}%`);
@@ -111,8 +125,9 @@ async function getClassifier(): Promise<any> {
       );
     })();
 
+    // 30s timeout — enough for a cached model to load, prevents hanging on bad network
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error("HuggingFace model load timed out after 5s")), 5000);
+      setTimeout(() => reject(new Error("HuggingFace model load timed out after 30s")), 30000);
     });
 
     classifier = await Promise.race([loadPromise, timeoutPromise]);

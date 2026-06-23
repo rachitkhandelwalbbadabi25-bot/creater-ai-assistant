@@ -56,7 +56,7 @@ export function normalizeIntent(intent: string): IntentEnum {
   if (lower === "file_management" || lower === IntentEnum.FILE_MANAGEMENT) {
     return IntentEnum.FILE_MANAGEMENT;
   }
-  return IntentEnum.UNKNOWN;
+  return IntentEnum.CONVERSATION; // Safe fallback: treat unclassified inputs as conversation
 }
 
 export function detectIntent(rawInput: string): SemanticResult {
@@ -127,10 +127,11 @@ export function detectIntent(rawInput: string): SemanticResult {
   }
 
   return {
-    intent: IntentEnum.UNKNOWN,
-    confidence: 0.2,
-    executionMode: "validation",
-    source: "fallback",
-    requiresValidation: true,
-  };
+  // Safe fallback: treat unclassified inputs as conversation
+  intent: IntentEnum.CONVERSATION,
+  confidence: 0.2,
+  executionMode: "validation",
+  source: "fallback",
+  requiresValidation: true,
+};
 }

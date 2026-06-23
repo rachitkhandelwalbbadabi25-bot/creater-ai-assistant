@@ -6,6 +6,8 @@ import type { GraphState } from "./state.js";
 import { chat, type ChatMessage } from "@llm/client.js";
 import { SYSTEM_PROMPT } from "@llm/prompts.js";
 import { GenerationPresets, Models } from "@config/models.js";
+import { DEFAULT_NUM_CTX } from "@llm/constants.js";
+import { getNumPredict } from "@llm/tokenBudget.js";
 import { addMessage, getChatHistory } from "@memory/shortTerm.js";
 import { createLogger } from "@utils/logger.js";
 
@@ -35,7 +37,7 @@ export async function projectAgentNode(state: GraphState): Promise<GraphState> {
     { role: "user", content: state.currentInput },
   ];
 
-  const response = await chat({ model, messages, options: preset });
+  const response = await chat({ model, messages, options: { ...preset, num_ctx: DEFAULT_NUM_CTX, num_predict: getNumPredict(state.intent) } });
 
   addMessage("user", state.currentInput, state.channel, { intent: state.intent });
   addMessage("assistant", response, state.channel);

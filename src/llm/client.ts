@@ -167,7 +167,24 @@ export async function chat(opts: UnifiedChatOptions): Promise<string> {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    log.error(`Cloud provider (${provider}) failed: ${message}. Falling back to local.`);
+    log.error(`Cloud provider (${provider}) failed: ${message}. Initiating fallback chain.`);
+    // Fallback chain for specific model failures
+    const fallbackModels = [];
+    if (opts.model === "qwen2.5:3b") {
+      fallbackModels.push("qwen2.5:1.5b", "phi3:mini");
+    }
+    for (const fbModel of fallbackModels) {
+      try {
+        log.info(`Attempting fallback model: ${fbModel}`);
+        const fbOpts = { ...opts, model: fbModel } as any;
+        const result = await chat(fbOpts);
+        return result;
+      } catch (fbErr) {
+        log.warn(`Fallback model ${fbModel} also failed`, { error: fbErr instanceof Error ? fbErr.message : String(fbErr) });
+        // continue to next fallback
+      }
+    }
+    // If all fallbacks fail, fall back to local default
     return fallbackToLocal(opts);
   }
 }
@@ -189,8 +206,14 @@ export async function chatStream(
 
   if (provider === "ollama") {
     try {
-      const { chatStream: ollamaChatStream } = await import("./ollama.js");
-      return await ollamaChatStream(opts as never, onToken);
+      const ollamaModule = await import("./ollama.js");
+      const ollamaChatStream = ollamaModule.chatStream as any;
+      const response: any = await ollamaChatStream(opts as never, onToken);
+      const content = typeof response === "string" ? response : (response?.message?.content ?? "");
+      if (IS_RUNTIME_DEBUG) {
+        log.info("Ollama stream response received", { model: opts.model, responseLength: content.length });
+      }
+      return content.trim();
     } catch (err) {
       log.error(`Local Ollama stream failed for model ${opts.model}: ${err}. Falling back to default model.`);
       const fallbackModel = env.DEFAULT_MODEL || "qwen2.5:3b";
@@ -198,7 +221,9 @@ export async function chatStream(
         throw err;
       }
       const { chatStream: ollamaChatStream } = await import("./ollama.js");
-      return await ollamaChatStream({ ...opts, model: fallbackModel } as never, onToken);
+      const response: any = await ollamaChatStream({ ...opts, model: fallbackModel } as never, onToken);
+      const content = typeof response === "string" ? response : (response?.message?.content ?? "");
+      return content.trim();
     }
   }
 

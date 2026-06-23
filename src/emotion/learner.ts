@@ -3,7 +3,7 @@
 // Tracks patterns over time to improve emotion detection accuracy.
 // ════════════════════════════════════════════════════════════════════════════════
 
-import { db } from "@memory/db.js";
+import { getDB } from "@memory/db.js";
 import { getMoodDistribution, getRecentMoods } from "./personalMap.js";
 import { storeFact } from "@memory/longTerm.js";
 import { createLogger } from "@utils/logger.js";
@@ -18,23 +18,30 @@ interface TimePattern {
   sampleCount: number;
 }
 
-const timePatternStmt = db.prepare(`
-  SELECT
-    CAST(strftime('%H', created_at) AS INTEGER) as hour,
-    mood,
-    COUNT(*) as count
-  FROM emotion_log
-  WHERE created_at > datetime('now', '-30 days')
-  GROUP BY hour, mood
-  ORDER BY hour, count DESC
-`);
+let timePatternStmt: any;
+
+function getTimePatternStmt() {
+  if (!timePatternStmt) {
+    timePatternStmt = getDB().prepare(`
+      SELECT
+        CAST(strftime('%H', created_at) AS INTEGER) as hour,
+        mood,
+        COUNT(*) as count
+      FROM emotion_log
+      WHERE created_at > datetime('now', '-30 days')
+      GROUP BY hour, mood
+      ORDER BY hour, count DESC
+    `);
+  }
+  return timePatternStmt;
+}
 
 /**
  * Analyze what moods are most common at each hour of the day.
  * Useful for proactive support ("user usually gets stressed around 3 PM").
  */
 export function getTimePatterns(): TimePattern[] {
-  const rows = timePatternStmt.all() as Array<{ hour: number; mood: Mood; count: number }>;
+  const rows = getTimePatternStmt().all() as Array<{ hour: number; mood: Mood; count: number }>;
   const byHour = new Map<number, { mood: Mood; count: number }>();
 
   for (const row of rows) {

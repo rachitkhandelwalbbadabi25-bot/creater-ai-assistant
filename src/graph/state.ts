@@ -40,6 +40,7 @@ export interface GraphState {
   mood: Mood;
   energy: EnergyLevel;
   emotionConfidence: number;
+  emotionContextTier?: "simple" | "deep" | "analysis";
 
   // ── Execution ───────────────────────────────────────────────────────────────
   currentStep: AgentStep;
@@ -74,12 +75,13 @@ export function createInitialState(
     mood: "neutral",
     energy: "medium",
     emotionConfidence: 0,
+    emotionContextTier: "simple",
     // execution bypass defaults
     skipConversationPipeline: false,
     skipEmotionPipeline: false,
     skipSemanticRetrieval: false,
-    // disallow fallback by default
-    allowConversationalFallback: false,
+    // allow conversational fallback by default
+    allowConversationalFallback: true,
     executionSource: undefined,
     currentStep: "routing",
     plan: [],

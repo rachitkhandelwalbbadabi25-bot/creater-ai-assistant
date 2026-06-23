@@ -2,7 +2,7 @@
 // src/proactive/alerts.ts — Deadline and reminder alert system
 // ════════════════════════════════════════════════════════════════════════════════
 
-import { db } from "@memory/db.js";
+import { getDB } from "@memory/db.js";
 import { createLogger } from "@utils/logger.js";
 
 const log = createLogger("proactive/alerts");
@@ -13,25 +13,37 @@ export function onAlertReady(cb: (message: string) => void): void {
   alertCallback = cb;
 }
 
-const upcomingTasksStmt = db.prepare(`
-  SELECT * FROM tasks
-  WHERE status IN ('pending', 'in_progress')
-    AND due_date IS NOT NULL
-    AND due_date <= datetime('now', '+24 hours')
-  ORDER BY due_date ASC
-`);
+let preparedStatements: {
+  upcomingTasksStmt: any;
+  overdueTasksStmt: any;
+} | undefined;
 
-const overdueTasksStmt = db.prepare(`
-  SELECT * FROM tasks
-  WHERE status IN ('pending', 'in_progress')
-    AND due_date IS NOT NULL
-    AND due_date < datetime('now')
-  ORDER BY due_date ASC
-`);
+function statements() {
+  if (!preparedStatements) {
+    const db = getDB();
+    preparedStatements = {
+      upcomingTasksStmt: db.prepare(`
+        SELECT * FROM tasks
+        WHERE status IN ('pending', 'in_progress')
+          AND due_date IS NOT NULL
+          AND due_date <= datetime('now', '+24 hours')
+        ORDER BY due_date ASC
+      `),
+      overdueTasksStmt: db.prepare(`
+        SELECT * FROM tasks
+        WHERE status IN ('pending', 'in_progress')
+          AND due_date IS NOT NULL
+          AND due_date < datetime('now')
+        ORDER BY due_date ASC
+      `),
+    };
+  }
+  return preparedStatements;
+}
 
 export async function checkDeadlines(): Promise<void> {
-  const upcoming = upcomingTasksStmt.all() as Array<{ title: string; due_date: string; priority: string }>;
-  const overdue = overdueTasksStmt.all() as Array<{ title: string; due_date: string; priority: string }>;
+  const upcoming = statements().upcomingTasksStmt.all() as Array<{ title: string; due_date: string; priority: string }>;
+  const overdue = statements().overdueTasksStmt.all() as Array<{ title: string; due_date: string; priority: string }>;
 
   if (overdue.length > 0) {
     const msg = `🚨 **Overdue Tasks:**\n${overdue.map(t => `  ❌ ${t.title} (due: ${t.due_date}) [${t.priority}]`).join("\n")}`;

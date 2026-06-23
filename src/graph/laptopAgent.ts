@@ -6,6 +6,8 @@ import type { GraphState } from "./state.js";
 import { chat, type ChatMessage } from "@llm/client.js";
 import { SYSTEM_PROMPT, buildToolSelectionPrompt } from "@llm/prompts.js";
 import { GenerationPresets } from "@config/models.js";
+import { DEFAULT_NUM_CTX } from "@llm/constants.js";
+import { getNumPredict } from "@llm/tokenBudget.js";
 import { TOOL_REGISTRY, requiresConfirmation } from "@config/tools.js";
 import { env } from "@config/index.js";
 import { addMessage } from "@memory/shortTerm.js";
@@ -539,7 +541,7 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
   const response = await chat({
     model: state.selectedModel,
     messages,
-    options: GenerationPresets.precise,
+    options: { ...GenerationPresets.precise, num_ctx: DEFAULT_NUM_CTX, num_predict: getNumPredict(state.intent) },
   });
 
   // Check for tool calls and execute if safe
@@ -634,7 +636,7 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
         const friendlyResponse = await chat({
           model: state.selectedModel,
           messages: friendlyMessages,
-          options: GenerationPresets.conversational,
+          options: { ...GenerationPresets.conversational, num_ctx: DEFAULT_NUM_CTX, num_predict: getNumPredict(state.intent) },
         });
 
         addMessage("assistant", friendlyResponse, state.channel);

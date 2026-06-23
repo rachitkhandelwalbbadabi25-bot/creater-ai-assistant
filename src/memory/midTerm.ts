@@ -2,7 +2,7 @@
 // src/memory/midTerm.ts — Mid-term memory: conversation summaries and topic clusters
 // ════════════════════════════════════════════════════════════════════════════════
 
-import { db } from "./db.js";
+import { getDB } from "./db.js";
 import { createLogger } from "@utils/logger.js";
 import { generateId } from "@utils/helpers.js";
 import { env } from "@config/index.js";
@@ -20,39 +20,51 @@ export interface Summary {
 }
 
 // ─── Prepared Statements ──────────────────────────────────────────────────────────
-const insertStmt = db.prepare(`
-  INSERT INTO summaries (id, content, message_ids, topic, importance, expires_at)
-  VALUES (?, ?, ?, ?, ?, datetime('now', '+' || ? || ' days'))
-`);
+let preparedStatements: {
+  insertStmt: any;
+  recentStmt: any;
+  byTopicStmt: any;
+  searchStmt: any;
+  promoteStmt: any;
+  deleteExpiredStmt: any;
+} | undefined;
 
-const recentStmt = db.prepare(`
-  SELECT * FROM summaries
-  WHERE (expires_at IS NULL OR expires_at > datetime('now'))
-  ORDER BY importance DESC, created_at DESC
-  LIMIT ?
-`);
-
-const byTopicStmt = db.prepare(`
-  SELECT * FROM summaries
-  WHERE topic = ? AND (expires_at IS NULL OR expires_at > datetime('now'))
-  ORDER BY created_at DESC
-  LIMIT ?
-`);
-
-const searchStmt = db.prepare(`
-  SELECT * FROM summaries
-  WHERE content LIKE ? AND (expires_at IS NULL OR expires_at > datetime('now'))
-  ORDER BY importance DESC
-  LIMIT ?
-`);
-
-const promoteStmt = db.prepare(`
-  UPDATE summaries SET importance = MIN(importance + 0.1, 1.0) WHERE id = ?
-`);
-
-const deleteExpiredStmt = db.prepare(`
-  DELETE FROM summaries WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')
-`);
+function statements() {
+  if (!preparedStatements) {
+    const db = getDB();
+    preparedStatements = {
+      insertStmt: db.prepare(`
+        INSERT INTO summaries (id, content, message_ids, topic, importance, expires_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now', '+' || ? || ' days'))
+      `),
+      recentStmt: db.prepare(`
+        SELECT * FROM summaries
+        WHERE (expires_at IS NULL OR expires_at > datetime('now'))
+        ORDER BY importance DESC, created_at DESC
+        LIMIT ?
+      `),
+      byTopicStmt: db.prepare(`
+        SELECT * FROM summaries
+        WHERE topic = ? AND (expires_at IS NULL OR expires_at > datetime('now'))
+        ORDER BY created_at DESC
+        LIMIT ?
+      `),
+      searchStmt: db.prepare(`
+        SELECT * FROM summaries
+        WHERE content LIKE ? AND (expires_at IS NULL OR expires_at > datetime('now'))
+        ORDER BY importance DESC
+        LIMIT ?
+      `),
+      promoteStmt: db.prepare(`
+        UPDATE summaries SET importance = MIN(importance + 0.1, 1.0) WHERE id = ?
+      `),
+      deleteExpiredStmt: db.prepare(`
+        DELETE FROM summaries WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')
+      `),
+    };
+  }
+  return preparedStatements;
+}
 
 // ─── Operations ───────────────────────────────────────────────────────────────────
 
@@ -72,7 +84,7 @@ export function addSummary(
   const id = generateId();
   const ttl = env.MID_TERM_TTL_DAYS;
 
-  insertStmt.run(
+  statements().insertStmt.run(
     id, content,
     JSON.stringify(messageIds),
     topic ?? null,
@@ -97,7 +109,7 @@ export function addSummary(
  * Get the most important/recent summaries.
  */
 export function getTopSummaries(limit = 10): Summary[] {
-  const rows = recentStmt.all(limit) as Array<Record<string, unknown>>;
+  const rows = statements().recentStmt.all(limit) as Array<Record<string, unknown>>;
   return rows.map(parseSummaryRow);
 }
 
@@ -105,7 +117,7 @@ export function getTopSummaries(limit = 10): Summary[] {
  * Get summaries by topic.
  */
 export function getSummariesByTopic(topic: string, limit = 10): Summary[] {
-  const rows = byTopicStmt.all(topic, limit) as Array<Record<string, unknown>>;
+  const rows = statements().byTopicStmt.all(topic, limit) as Array<Record<string, unknown>>;
   return rows.map(parseSummaryRow);
 }
 
@@ -113,7 +125,7 @@ export function getSummariesByTopic(topic: string, limit = 10): Summary[] {
  * Full-text search across summaries.
  */
 export function searchSummaries(query: string, limit = 10): Summary[] {
-  const rows = searchStmt.all(`%${query}%`, limit) as Array<Record<string, unknown>>;
+  const rows = statements().searchStmt.all(`%${query}%`, limit) as Array<Record<string, unknown>>;
   return rows.map(parseSummaryRow);
 }
 
@@ -122,7 +134,7 @@ export function searchSummaries(query: string, limit = 10): Summary[] {
  * This prevents important memories from expiring.
  */
 export function promoteSummary(id: string): void {
-  promoteStmt.run(id);
+  statements().promoteStmt.run(id);
   log.mem(`Promoted summary importance`, { id });
 }
 
@@ -130,7 +142,7 @@ export function promoteSummary(id: string): void {
  * Clean up expired summaries.
  */
 export function cleanExpired(): number {
-  const result = deleteExpiredStmt.run();
+  const result = statements().deleteExpiredStmt.run();
   if (result.changes > 0) {
     log.info(`Cleaned ${result.changes} expired summaries`);
   }

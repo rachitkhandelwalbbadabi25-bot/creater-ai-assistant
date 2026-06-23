@@ -1,10 +1,6 @@
-// ════════════════════════════════════════════════════════════════════════════════
-// src/config/index.ts — Central configuration loader
-// Reads from .env and exports typed config objects used across the entire app.
-// ════════════════════════════════════════════════════════════════════════════════
-
 import { z } from "zod";
 
+// Helper to coerce boolean env vars
 const envBoolean = z.preprocess((v) => {
   if (typeof v === "string") {
     if (v.toLowerCase() === "true") return true;
@@ -13,7 +9,7 @@ const envBoolean = z.preprocess((v) => {
   return v;
 }, z.coerce.boolean());
 
-// ─── Environment Schema (validated at startup) ──────────────────────────────────
+// Environment schema validated at startup
 const EnvSchema = z.object({
   // App Identity
   APP_NAME: z.string().default("Creater"),
@@ -25,19 +21,21 @@ const EnvSchema = z.object({
   // Ollama
   OLLAMA_BASE_URL: z.string().url().default("http://localhost:11434"),
   OLLAMA_TIMEOUT_MS: z.coerce.number().default(120000),
-  OLLAMA_PRIMARY_MODEL: z.string().default("qwen2.5:3b"),
+  OLLAMA_KEEP_ALIVE: z.string().default("30m"),
   OLLAMA_FAST_MODEL: z.string().default("qwen2.5:3b"),
-  OLLAMA_CODER_MODEL: z.string().default("qwen2.5-coder:7b"),
-  OLLAMA_EMBED_MODEL: z.string().default("nomic-embed-text:latest"),
+  OLLAMA_PRIMARY_MODEL: z.string().default("qwen2.5:3b"),
+  OLLAMA_CODER_MODEL: z.string().default("qwen2.5:3b"),
+  OLLAMA_EMBED_MODEL: z.string().default("nomic-embed-text"),
+  ENABLE_OLLAMA_WARMUP: envBoolean.default(false), // disabled — prevents runner contention
 
-  // Cloud API Keys (Multi-LLM)
+  // API keys (optional — enable cloud providers)
   ANTHROPIC_API_KEY: z.string().default(""),
   OPENAI_API_KEY: z.string().default(""),
   GROK_API_KEY: z.string().default(""),
   GEMINI_API_KEY: z.string().default(""),
   DEEPSEEK_API_KEY: z.string().default(""),
   DEFAULT_CLOUD_MODEL: z.string().default("claude-3-5-sonnet-20241022"),
-  DEFAULT_MODEL: z.string().optional(), // If set, overrides PRIMARY/FAST logic
+  DEFAULT_MODEL: z.string().optional(),
   USE_LLM_ROUTER: envBoolean.default(false),
   LLM_PROVIDER: z.enum([
     "local",
@@ -70,6 +68,7 @@ const EnvSchema = z.object({
 
   // Proactive Scheduler
   PROACTIVE_ENABLED: envBoolean.default(true),
+  ENABLE_LATENCY_AUDIT: envBoolean.default(false),
   MORNING_BRIEFING_CRON: z.string().default("0 7 * * *"),
   NIGHT_CHECK_CRON: z.string().default("0 22 * * *"),
   DEADLINE_CHECK_CRON: z.string().default("0 9,15 * * *"),
@@ -91,16 +90,15 @@ const EnvSchema = z.object({
   WEB_DASHBOARD_PORT: z.coerce.number().default(3000),
   WEB_DASHBOARD_ENABLED: envBoolean.default(false),
 
-  // Debug
+  // Debug flags
   DEBUG_LLM_CALLS: envBoolean.default(false),
   DEBUG_MEMORY: envBoolean.default(false),
   DEBUG_TOOLS: envBoolean.default(false),
   MOCK_LLM: envBoolean.default(false),
 });
 
-// ─── Parse and validate environment at module load ───────────────────────────────
+// Parse and validate environment at module load
 const parsed = EnvSchema.safeParse(process.env);
-
 if (!parsed.success) {
   console.error("❌ Invalid environment configuration:");
   console.error(parsed.error.flatten().fieldErrors);
@@ -109,7 +107,7 @@ if (!parsed.success) {
 
 export const env = parsed.data;
 
-// ─── Derived helpers ─────────────────────────────────────────────────────────────
+// Derived helpers
 export const isDev = env.APP_ENV === "development";
 export const isProd = env.APP_ENV === "production";
 

@@ -4,7 +4,7 @@ import { chat } from "../src/llm/client.ts";
 import { classifyIntent } from "../src/llm/router.ts";
 import { detectEmotion } from "../src/emotion/detector.ts";
 import { retrieveContext } from "../src/memory/retriever.ts";
-import { processMessage } from "../src/graph/supervisor.ts";
+import { processMessageStreaming } from "../src/graph/supervisor.ts";
 import { initVectorStore, addEntry, search } from "../src/memory/vector.ts";
 
 // ─── Timeout Wrapper ─────────────────────────────────────────────────────────────
@@ -148,14 +148,16 @@ async function runDiagnostics() {
   console.log("👉 STEP 6: Testing Full Supervisor Pipeline...");
   try {
     const start = Date.now();
+    let streamedText = "";
     const response = await withTimeout(
-      processMessage("hello", "tui"),
+      processMessageStreaming("hello", "tui", (token) => { streamedText += token; }),
       60000,
       "Full Pipeline Test"
     );
+    const final = streamedText || response;
     const elapsed = Date.now() - start;
-    console.log(`✅ Pipeline OK — response: "${response}", ${elapsed}ms\n`);
-    results["Step 6: Full Pipeline"] = { ok: true, time: elapsed, detail: response };
+    console.log(`✅ Pipeline OK — response: "${final}", ${elapsed}ms\n`);
+    results["Step 6: Full Pipeline"] = { ok: true, time: elapsed, detail: final };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.log(`❌ Pipeline FAILED — ${msg}\n`);

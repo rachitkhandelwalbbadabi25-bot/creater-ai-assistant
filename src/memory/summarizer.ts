@@ -5,6 +5,8 @@
 import { chat, type ChatMessage } from "@llm/client.js";
 import { MEMORY_SUMMARY_PROMPT } from "@llm/prompts.js";
 import { Models, GenerationPresets } from "@config/models.js";
+import { DEFAULT_NUM_CTX } from "@llm/constants.js";
+import { getNumPredict } from "@llm/tokenBudget.js";
 import { getRecentMessages, cleanExpired as cleanMessages } from "./shortTerm.js";
 import { addSummary } from "./midTerm.js";
 import { addEntry } from "./vector.js";
@@ -44,7 +46,7 @@ export async function summarizeRecentMessages(
   const summary = await chat({
     model: Models.FAST,
     messages: llmMessages,
-    options: GenerationPresets.precise,
+    options: { ...GenerationPresets.precise, num_ctx: DEFAULT_NUM_CTX, num_predict: getNumPredict("memory_synthesis") },
   });
 
   if (!summary || summary.length < 10) {
@@ -89,7 +91,7 @@ async function detectTopic(summary: string): Promise<string> {
         },
         { role: "user", content: summary },
       ],
-      options: GenerationPresets.classification,
+      options: { ...GenerationPresets.classification, num_ctx: DEFAULT_NUM_CTX, num_predict: 32 },
     });
     return response.trim().toLowerCase().replace(/[^a-z0-9\s]/g, "").slice(0, 50);
   } catch {

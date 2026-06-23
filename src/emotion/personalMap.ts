@@ -2,43 +2,57 @@
 // src/emotion/personalMap.ts — User's evolving personality/emotion profile
 // ════════════════════════════════════════════════════════════════════════════════
 
-import { db } from "@memory/db.js";
+import { getDB } from "@memory/db.js";
 import { createLogger } from "@utils/logger.js";
 import { generateId } from "@utils/helpers.js";
 import type { Mood, EnergyLevel } from "./keywords.js";
 
 const log = createLogger("emotion/personalMap");
 
-const insertLogStmt = db.prepare(`
-  INSERT INTO emotion_log (id, mood, energy, confidence, trigger, message_id)
-  VALUES (?, ?, ?, ?, ?, ?)
-`);
-const recentMoodsStmt = db.prepare(`
-  SELECT mood, energy, confidence, created_at FROM emotion_log
-  ORDER BY created_at DESC LIMIT ?
-`);
-const moodDistStmt = db.prepare(`
-  SELECT mood, COUNT(*) as count FROM emotion_log
-  WHERE created_at > datetime('now', '-' || ? || ' days')
-  GROUP BY mood ORDER BY count DESC
-`);
+let preparedStatements: {
+  insertLogStmt: any;
+  recentMoodsStmt: any;
+  moodDistStmt: any;
+} | undefined;
+
+function statements() {
+  if (!preparedStatements) {
+    const db = getDB();
+    preparedStatements = {
+      insertLogStmt: db.prepare(`
+        INSERT INTO emotion_log (id, mood, energy, confidence, trigger, message_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `),
+      recentMoodsStmt: db.prepare(`
+        SELECT mood, energy, confidence, created_at FROM emotion_log
+        ORDER BY created_at DESC LIMIT ?
+      `),
+      moodDistStmt: db.prepare(`
+        SELECT mood, COUNT(*) as count FROM emotion_log
+        WHERE created_at > datetime('now', '-' || ? || ' days')
+        GROUP BY mood ORDER BY count DESC
+      `),
+    };
+  }
+  return preparedStatements;
+}
 
 export function logEmotion(
   mood: Mood, energy: EnergyLevel, confidence: number,
   trigger?: string, messageId?: string
 ): void {
-  insertLogStmt.run(generateId(), mood, energy, confidence, trigger ?? null, messageId ?? null);
+  statements().insertLogStmt.run(generateId(), mood, energy, confidence, trigger ?? null, messageId ?? null);
   log.mem(`Logged: ${mood} (${energy}, ${(confidence * 100).toFixed(0)}%)`);
 }
 
 export function getRecentMoods(limit = 10) {
-  return recentMoodsStmt.all(limit) as Array<{
+  return statements().recentMoodsStmt.all(limit) as Array<{
     mood: Mood; energy: EnergyLevel; confidence: number; created_at: string;
   }>;
 }
 
 export function getMoodDistribution(days = 7) {
-  return moodDistStmt.all(days.toString()) as Array<{ mood: Mood; count: number }>;
+  return statements().moodDistStmt.all(days.toString()) as Array<{ mood: Mood; count: number }>;
 }
 
 export function getDominantMood(): Mood {

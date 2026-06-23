@@ -14,6 +14,7 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 import { env, isDev } from "@config/index.js";
+import { initDatabase } from "@memory/db.js";
 import { loadPersistedSettings, getSetting } from "@config/settings.js";
 import { checkOllamaHealth, ensureModel } from "@llm/ollama.js";
 import { Models, isLocalModel } from "@config/models.js";
@@ -33,6 +34,10 @@ async function main(): Promise<void> {
 
   // 1. Global error handlers
   setupGlobalErrorHandler();
+
+  // 1a. Database — must be first. initDatabase() is idempotent; subsequent calls
+  //     are no-ops guarded by globalThis.__dbInstance. Migrations run exactly once.
+  initDatabase();
 
   // 1b. Load persistent settings from database
   loadPersistedSettings();
@@ -93,6 +98,14 @@ async function main(): Promise<void> {
         if (isLocalModel(Models.EMBED)) ensureModel(Models.EMBED).catch(() => {});
       } catch (e) {
         log.warn("Failed to ensure some models - continuing anyway.");
+      }
+
+      // Startup config validation
+      const coderModel = env.OLLAMA_CODER_MODEL || "qwen2.5:3b";
+      const primaryModel2 = env.OLLAMA_PRIMARY_MODEL || "qwen2.5:3b";
+      log.info(`[OLLAMA_CONFIG] primary=${primaryModel2} fast=${env.OLLAMA_FAST_MODEL} coder=${coderModel} num_ctx=2048`);
+      if (coderModel !== primaryModel2 && coderModel === "qwen2.5:7b") {
+        log.warn(`[MODEL_WARNING] coder model (${coderModel}) differs from primary model (${primaryModel2}) — may cause OOM on low-RAM systems`);
       }
     }
   } else {

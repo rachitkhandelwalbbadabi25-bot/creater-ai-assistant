@@ -5,6 +5,8 @@
 import { chat, type ChatMessage } from "@llm/client.js";
 import { MORNING_BRIEFING_PROMPT } from "@llm/prompts.js";
 import { Models, GenerationPresets } from "@config/models.js";
+import { DEFAULT_NUM_CTX } from "@llm/constants.js";
+import { getNumPredict } from "@llm/tokenBudget.js";
 import { buildUserContext } from "@utils/contextBuilder.js";
 import { getTopSummaries } from "@memory/midTerm.js";
 import { buildEmotionProfile } from "@emotion/personalMap.js";
@@ -50,7 +52,7 @@ export async function generateMorningBriefing(): Promise<string> {
   const briefing = await chat({
     model: Models.PRIMARY,
     messages,
-    options: GenerationPresets.conversational,
+    options: { ...GenerationPresets.conversational, num_ctx: DEFAULT_NUM_CTX, num_predict: getNumPredict("morning_briefing") },
   });
 
   log.info("Morning briefing generated");

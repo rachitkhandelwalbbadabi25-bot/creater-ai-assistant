@@ -46,6 +46,26 @@ export interface FullContext {
   tokenCount: number;
 }
 
+export interface ContextRenderOptions {
+  includeUser?: boolean;
+  includeTime?: boolean;
+  includeGreeting?: boolean;
+  includeEmotion?: boolean;
+  includeSystemStatus?: boolean;
+  includeProfileFacts?: boolean;
+  includeGraphContext?: boolean;
+}
+
+const DEFAULT_CONTEXT_RENDER_OPTIONS: Required<ContextRenderOptions> = {
+  includeUser: true,
+  includeTime: true,
+  includeGreeting: true,
+  includeEmotion: true,
+  includeSystemStatus: true,
+  includeProfileFacts: true,
+  includeGraphContext: true,
+};
+
 // ─── Context Builder ──────────────────────────────────────────────────────────────
 
 /**
@@ -80,20 +100,28 @@ export function buildFullContext(
  * Serializes a FullContext into a string block suitable for
  * injection into an LLM system/user prompt.
  */
-export function contextToString(ctx: FullContext, maxTokens = 2048): string {
+export function contextToString(
+  ctx: FullContext,
+  maxTokens = 2048,
+  options: ContextRenderOptions = {}
+): string {
+  const renderOptions = { ...DEFAULT_CONTEXT_RENDER_OPTIONS, ...options };
   const sections: string[] = [];
 
-  // User section
-  sections.push(
-    `[USER CONTEXT]`,
-    `Name: ${ctx.user.userName}`,
-    `Time: ${ctx.user.currentTime} (${ctx.user.timezone})`,
-    `Day: ${ctx.user.dayOfWeek}`,
-    `Greeting: ${ctx.user.greeting}`
-  );
+  if (renderOptions.includeUser) {
+    const userLines = [`[USER CONTEXT]`, `Name: ${ctx.user.userName}`];
+    if (renderOptions.includeTime) {
+      userLines.push(`Time: ${ctx.user.currentTime} (${ctx.user.timezone})`);
+      userLines.push(`Day: ${ctx.user.dayOfWeek}`);
+    }
+    if (renderOptions.includeGreeting) {
+      userLines.push(`Greeting: ${ctx.user.greeting}`);
+    }
+    sections.push(...userLines);
+  }
 
   // Emotion section
-  if (ctx.emotion) {
+  if (renderOptions.includeEmotion && ctx.emotion) {
     sections.push(
       `\n[EMOTIONAL STATE]`,
       `Mood: ${ctx.emotion.currentMood} (confidence: ${(ctx.emotion.confidence * 100).toFixed(0)}%)`,
@@ -105,7 +133,7 @@ export function contextToString(ctx: FullContext, maxTokens = 2048): string {
   }
 
   // System status section (Laptop info)
-  if (ctx.memory.systemStatus) {
+  if (renderOptions.includeSystemStatus && ctx.memory.systemStatus) {
     sections.push(
       `\n[SYSTEM STATUS]`,
       `OS: ${ctx.memory.systemStatus.os}`,
@@ -123,7 +151,7 @@ export function contextToString(ctx: FullContext, maxTokens = 2048): string {
     );
   }
 
-  if (ctx.memory.userProfileFacts && ctx.memory.userProfileFacts.length > 0) {
+  if (renderOptions.includeProfileFacts && ctx.memory.userProfileFacts && ctx.memory.userProfileFacts.length > 0) {
     sections.push(
       `\n[USER PROFILE & FACTS]`,
       ...ctx.memory.userProfileFacts.map(f => `  • ${f.key}: ${f.value}`)
@@ -151,7 +179,7 @@ export function contextToString(ctx: FullContext, maxTokens = 2048): string {
     );
   }
 
-  if (ctx.memory.graphContext) {
+  if (renderOptions.includeGraphContext && ctx.memory.graphContext) {
     sections.push(`\n${ctx.memory.graphContext}`);
   }
 

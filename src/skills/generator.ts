@@ -4,6 +4,7 @@
 
 import { chat, type ChatMessage } from "@llm/ollama.js";
 import { Models, GenerationPresets } from "@config/models.js";
+import { DEFAULT_NUM_CTX } from "@llm/constants.js";
 import { createLogger } from "@utils/logger.js";
 
 const log = createLogger("skills/generator");
@@ -45,7 +46,7 @@ export async function suggestSkill(
     const response = await chat({
       model: Models.PRIMARY,
       messages,
-      options: GenerationPresets.precise,
+      options: { ...GenerationPresets.precise, num_ctx: DEFAULT_NUM_CTX, num_predict: 512 },
       format: "json",
     });
 

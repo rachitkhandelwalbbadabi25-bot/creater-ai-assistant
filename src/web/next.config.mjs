@@ -30,7 +30,15 @@ const nextConfig = {
       "@tui": "../../src/tui",
     }
   },
-  webpack: (config) => {
+  webpack: (config, { webpack }) => {
+    // Silence macOS-only optional native modules that systeminformation
+    // conditionally requires — they are never used on Windows/Linux.
+    config.plugins = config.plugins ?? [];
+    config.plugins.push(
+      new webpack.IgnorePlugin({
+        resourceRegExp: /^(osx-temperature-sensor|macos-temperature-sensor)$/,
+      })
+    );
     config.resolve.alias = {
       ...config.resolve.alias,
       "@graph": path.resolve(__dirname, "../../src/graph"),

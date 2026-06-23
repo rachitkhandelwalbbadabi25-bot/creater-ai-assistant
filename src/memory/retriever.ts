@@ -5,6 +5,12 @@ import { buildGraphContext, searchGraph } from "./graph.js";
 import { createLogger } from "@utils/logger.js";
 import type { MemoryContext } from "@utils/contextBuilder.js";
 import { IS_RUNTIME_DEBUG, logPerf, nowMs } from "@utils/perf.js";
+import { getCached, setCached } from "./cache.js";
+import { trimContext } from "./contextBudget.js";
+
+// Maximum number of facts to inject into context per request.
+// Keeps payloadChars well under budget.
+const MAX_FACTS_IN_CONTEXT = 10;
 
 const log = createLogger("memory/retriever");
 
@@ -21,6 +27,24 @@ const EXECUTION_SKIP_PATTERN = /\b(open|launch|start|run|search|google|youtube|b
 const SYSTEM_STATUS_PATTERN = /\b(system|laptop|battery)\b/i;
 
 export async function retrieveContext(options: RetrievalOptions): Promise<MemoryContext> {
+  const cacheKey = `retrieval:${options.query}:${options.recentMessageCount ?? 10}:${options.semanticResultCount ?? 5}`;
+  const cached = getCached<MemoryContext>("retrieval", cacheKey);
+  if (cached) {
+    if (IS_RUNTIME_DEBUG) {
+      log.info("Retrieval cache hit", { query: options.query });
+    }
+    return cached;
+  }
+
+  console.time('retrieveContext');
+  const result = await actualRetrieveContext(options);
+  const trimmed = trimContext(result);
+  setCached("retrieval", cacheKey, trimmed);
+  console.timeEnd('retrieveContext');
+  return trimmed;
+}
+
+async function actualRetrieveContext(options: RetrievalOptions): Promise<MemoryContext> {
   const startedAt = nowMs();
   const {
     query,
@@ -85,7 +109,8 @@ export async function retrieveContext(options: RetrievalOptions): Promise<Memory
   }
 
   let systemStatus: any;
-  if (SYSTEM_STATUS_PATTERN.test(query)) {
+  const isExplicitSystemQuery = /\b(status|info|metrics|usage|percent|charging|specs|specification|temp|temperature|uptime)\b/i.test(query);
+  if (SYSTEM_STATUS_PATTERN.test(query) && isExplicitSystemQuery) {
     try {
       const { getSystemInfo } = await import("@tools/laptop/system.js");
       systemStatus = await getSystemInfo();
@@ -94,6 +119,15 @@ export async function retrieveContext(options: RetrievalOptions): Promise<Memory
     }
   }
 
+  // ─── Fact injection — capped to prevent context bloat ───────────────────────
+  // getAllFacts() can return hundreds of rows; we cap at MAX_FACTS_IN_CONTEXT.
+  // On first boot (no facts) this is effectively free.
+  const allFacts = getAllFacts();
+  const cappedFacts = allFacts.slice(0, MAX_FACTS_IN_CONTEXT);
+
+  // Graph context is expensive and verbose — only include in debug mode.
+  const graphCtx = IS_RUNTIME_DEBUG ? buildGraphContext(5) : undefined;
+
   const context: MemoryContext = {
     recentMessages,
     relevantMemories,
@@ -101,14 +135,29 @@ export async function retrieveContext(options: RetrievalOptions): Promise<Memory
     pendingTasks: [],
     upcomingDeadlines: [],
     systemStatus,
-    userProfileFacts: getAllFacts(),
-    graphContext: buildGraphContext(10),
+    userProfileFacts: cappedFacts,
+    graphContext: graphCtx,
   };
 
-  log.mem(`Retrieved context: ${recentMessages.length} recent, ${relevantMemories.length} relevant`);
+  // ─── Context size audit ──────────────────────────────────────────────────────
+  const payloadChars = JSON.stringify(context).length;
+  console.log("[CONTEXT_AUDIT]", {
+    messageCount: recentMessages.length,
+    relevantMemories: relevantMemories.length,
+    factsTotal: allFacts.length,
+    factsCapped: cappedFacts.length,
+    payloadChars,
+    payloadBudgetOk: payloadChars < 8000,
+  });
+  if (payloadChars >= 8000) {
+    log.warn("[CONTEXT_BLOAT] payloadChars exceeds 8000 — consider pruning memory sources", { payloadChars });
+  }
+
+  log.mem(`Retrieved context: ${recentMessages.length} recent, ${relevantMemories.length} relevant, ${cappedFacts.length} facts`);
   logPerf(log, "retrieveContext completed", startedAt, {
     skipSemanticSearch: shouldSkipSemanticSearch,
     relevantMemories: relevantMemories.length,
+    payloadChars,
   });
   return context;
 }

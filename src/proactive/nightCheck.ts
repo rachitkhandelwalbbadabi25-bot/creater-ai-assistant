@@ -5,6 +5,8 @@
 import { chat, type ChatMessage } from "@llm/client.js";
 import { NIGHT_CHECK_PROMPT } from "@llm/prompts.js";
 import { Models, GenerationPresets } from "@config/models.js";
+import { DEFAULT_NUM_CTX } from "@llm/constants.js";
+import { getNumPredict } from "@llm/tokenBudget.js";
 import { buildUserContext } from "@utils/contextBuilder.js";
 import { getTopSummaries } from "@memory/midTerm.js";
 import { createLogger } from "@utils/logger.js";
@@ -35,7 +37,7 @@ export async function generateNightCheck(): Promise<string> {
   const checkIn = await chat({
     model: Models.FAST,
     messages,
-    options: GenerationPresets.conversational,
+    options: { ...GenerationPresets.conversational, num_ctx: DEFAULT_NUM_CTX, num_predict: getNumPredict("night_check") },
   });
 
   log.info("Night check-in generated");

@@ -2,7 +2,7 @@
 // src/memory/longTerm.ts — Long-term memory: core facts, preferences, persistent knowledge
 // ════════════════════════════════════════════════════════════════════════════════
 
-import { db } from "./db.js";
+import { getDB } from "./db.js";
 import { createLogger } from "@utils/logger.js";
 import { generateId } from "@utils/helpers.js";
 import { autoLinkFact } from "./graph.js";
@@ -23,21 +23,37 @@ export interface Fact {
 }
 
 // ─── Prepared Statements ──────────────────────────────────────────────────────────
-const upsertStmt = db.prepare(`
-  INSERT INTO facts (id, category, key, value, confidence, source)
-  VALUES (?, ?, ?, ?, ?, ?)
-  ON CONFLICT(category, key) DO UPDATE SET
-    value = excluded.value,
-    confidence = excluded.confidence,
-    source = excluded.source,
-    updated_at = datetime('now')
-`);
+let preparedStatements: {
+  upsertStmt: any;
+  getByKeyStmt: any;
+  getByCategoryStmt: any;
+  searchStmt: any;
+  allStmt: any;
+  deleteStmt: any;
+} | undefined;
 
-const getByKeyStmt = db.prepare(`SELECT * FROM facts WHERE category = ? AND key = ?`);
-const getByCategoryStmt = db.prepare(`SELECT * FROM facts WHERE category = ? ORDER BY updated_at DESC`);
-const searchStmt = db.prepare(`SELECT * FROM facts WHERE key LIKE ? OR value LIKE ? ORDER BY confidence DESC LIMIT ?`);
-const allStmt = db.prepare(`SELECT * FROM facts ORDER BY category, updated_at DESC`);
-const deleteStmt = db.prepare(`DELETE FROM facts WHERE id = ?`);
+function statements() {
+  if (!preparedStatements) {
+    const db = getDB();
+    preparedStatements = {
+      upsertStmt: db.prepare(`
+        INSERT INTO facts (id, category, key, value, confidence, source)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(category, key) DO UPDATE SET
+          value = excluded.value,
+          confidence = excluded.confidence,
+          source = excluded.source,
+          updated_at = datetime('now')
+      `),
+      getByKeyStmt: db.prepare(`SELECT * FROM facts WHERE category = ? AND key = ?`),
+      getByCategoryStmt: db.prepare(`SELECT * FROM facts WHERE category = ? ORDER BY updated_at DESC`),
+      searchStmt: db.prepare(`SELECT * FROM facts WHERE key LIKE ? OR value LIKE ? ORDER BY confidence DESC LIMIT ?`),
+      allStmt: db.prepare(`SELECT * FROM facts ORDER BY category, updated_at DESC`),
+      deleteStmt: db.prepare(`DELETE FROM facts WHERE id = ?`),
+    };
+  }
+  return preparedStatements;
+}
 
 // ─── Operations ───────────────────────────────────────────────────────────────────
 
@@ -58,7 +74,7 @@ export function storeFact(
   source?: string
 ): Fact {
   const id = generateId();
-  upsertStmt.run(id, category, key, value, confidence, source ?? null);
+  statements().upsertStmt.run(id, category, key, value, confidence, source ?? null);
   log.mem(`Stored fact: [${category}] ${key} = ${value}`);
   // Auto-link into the knowledge graph
   try { autoLinkFact(category, key, value); } catch (_) {}
@@ -69,14 +85,14 @@ export function storeFact(
  * Retrieve a specific fact by category + key.
  */
 export function getFact(category: FactCategory, key: string): Fact | undefined {
-  return getByKeyStmt.get(category, key) as Fact | undefined;
+  return statements().getByKeyStmt.get(category, key) as Fact | undefined;
 }
 
 /**
  * Get all facts in a category.
  */
 export function getFactsByCategory(category: FactCategory): Fact[] {
-  return getByCategoryStmt.all(category) as Fact[];
+  return statements().getByCategoryStmt.all(category) as Fact[];
 }
 
 /**
@@ -84,21 +100,21 @@ export function getFactsByCategory(category: FactCategory): Fact[] {
  */
 export function searchFacts(query: string, limit = 20): Fact[] {
   const q = `%${query}%`;
-  return searchStmt.all(q, q, limit) as Fact[];
+  return statements().searchStmt.all(q, q, limit) as Fact[];
 }
 
 /**
  * Get all stored facts. Useful for building user profile context.
  */
 export function getAllFacts(): Fact[] {
-  return allStmt.all() as Fact[];
+  return statements().allStmt.all() as Fact[];
 }
 
 /**
  * Delete a specific fact.
  */
 export function deleteFact(id: string): boolean {
-  const result = deleteStmt.run(id);
+  const result = statements().deleteStmt.run(id);
   return result.changes > 0;
 }
 

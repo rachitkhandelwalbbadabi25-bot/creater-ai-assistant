@@ -3,7 +3,7 @@
 // -------------------------------------------------------------------------------
 
 import { Ollama } from "ollama";
-import { env } from "@config/index.js";
+import { isDev, env } from "@config/index.js";
 import { v4 as uuidv4 } from "uuid";
 import * as fs from "fs";
 import * as path from "path";
@@ -14,6 +14,9 @@ import { LLMError, safeAsync, type Result, withRetry } from "@utils/errorHandler
 import { withTimeout } from "@utils/helpers.js";
 import { latencyTracker } from "@utils/latencyTracker.js";
 import { execSync } from "child_process";
+
+const MODULE_INSTANCE_ID = Math.random().toString(36).slice(2);
+console.log("[MODULE_INSTANCE]", { file: "ollama.ts", event: "load", id: MODULE_INSTANCE_ID });
 
 const log = createLogger("llm/ollama");
 
@@ -211,8 +214,8 @@ async function captureRunnerCrashDiagnostics(
 function isRunnerCrashError(error: unknown): boolean {
   const msg = toError(error).message.toLowerCase();
   return msg.includes("llama runner process has terminated") ||
-         msg.includes("runner process") ||
-         msg.includes("runner terminated");
+    msg.includes("runner process") ||
+    msg.includes("runner terminated");
 }
 
 function logPromptAudit(messages: ChatMessage[]): void {
@@ -294,6 +297,7 @@ async function withOllamaLock<T>(
   task: () => Promise<T>
 ): Promise<T> {
   requestId = `${operation}-${++operationSeq}`;
+  console.log("[MODULE_INSTANCE]", { file: "ollama.ts", event: "start", id: MODULE_INSTANCE_ID, requestId });
   const queuedAt = Date.now();
 
   // Initialize latency record if auditing enabled
@@ -308,12 +312,8 @@ async function withOllamaLock<T>(
     });
   }
 
-  log.info("Ollama operation queued", {
-    requestId,
-    operation,
-    activeOperations,
-    ...context,
-  });
+  // REQUEST_START log
+  if (isDev) log.debug('[REQUEST_START]', { requestId, operation, ...context });
 
   // Queue handling (simple mutex using promise chain)
   const waitForTurn = queueTail;
@@ -348,6 +348,7 @@ async function withOllamaLock<T>(
     ...context,
   });
 
+
   try {
     const result = await task();
 
@@ -379,6 +380,7 @@ async function withOllamaLock<T>(
     });
     throw normalized;
   } finally {
+    console.log("[MODULE_INSTANCE]", { file: "ollama.ts", event: "end", id: MODULE_INSTANCE_ID, requestId });
     activeOperations = Math.max(0, activeOperations - 1);
     release();
   }
@@ -398,25 +400,44 @@ async function listOllamaModels(): Promise<string[]> {
 export async function checkOllamaHealth(): Promise<Result<string[]>> {
   return safeAsync(async () => {
     return await withOllamaLock("health", { host: env.OLLAMA_BASE_URL }, async () => {
+      if (isDev) log.debug('[HEALTH_CHECK_START]');
       const modelNames = await listOllamaModels();
-      log.info("Ollama startup check complete", {
-        modelCount: modelNames.length,
-        models: modelNames,
-      });
+      log.info("Ollama startup check complete", { modelCount: modelNames.length, models: modelNames });
+      if (isDev) log.debug('[HEALTH_CHECK_END]');
       return modelNames;
     });
   });
 }
 
 export async function ensureModel(modelName: string): Promise<void> {
-  await withOllamaLock("ensureModel", { modelName }, async () => {
-    const healthModels = await listOllamaModels();
-    const loaded = healthModels.some((m) => m.startsWith(modelName.split(":")[0]!));
-    if (!loaded) {
-      log.info("Model pull starting", { modelName });
-      await client.pull({ model: modelName, stream: false });
-      log.info("Model pull completed", { modelName });
+  await withOllamaLock('ensureModel', { modelName }, async () => {
+    if (isDev) log.debug('[ENSURE_MODEL_START]', { requestId, pid: process.pid, modelName });
+    
+    const models = await listOllamaModels();
+    const hasTag = modelName.includes(":");
+    const normalizedName = hasTag ? modelName : `${modelName}:latest`;
+    const exists = models.some(m => {
+      const mNorm = m.includes(":") ? m : `${m}:latest`;
+      return mNorm.toLowerCase() === normalizedName.toLowerCase() || m.toLowerCase() === modelName.toLowerCase();
+    });
+
+    if (!exists) {
+      if (isDev) log.debug('Model pull starting', { modelName });
+      log.info("Model pull started", { modelName });
+      const stream = await client.pull({ model: modelName, stream: true });
+      for await (const part of stream as AsyncIterable<{ status?: string; completed?: number; total?: number }>) {
+        if (part.completed && part.total) {
+          const percent = ((part.completed / part.total) * 100).toFixed(1);
+          log.info(`Pull progress for ${modelName}: ${percent}% (${part.status})`);
+        } else if (part.status) {
+          log.info(`Pull status for ${modelName}: ${part.status}`);
+        }
+      }
+      log.info("Model pull ended", { modelName });
+      if (isDev) log.debug('Model pull completed', { modelName });
     }
+    
+    if (isDev) log.debug('[ENSURE_MODEL_END]', { requestId, pid: process.pid, modelName });
   });
 }
 
@@ -439,6 +460,7 @@ export interface ChatOptions {
 
 export async function chat(opts: ChatOptions): Promise<string> {
   cancelOllamaWarmup("chat request started");
+  await ensureModel(opts.model);
 
   log.llm("Prompt received", {
     operation: "chat",
@@ -513,6 +535,7 @@ export async function chatStream(
   onToken: (token: string) => void
 ): Promise<string> {
   cancelOllamaWarmup("chat stream request started");
+  await ensureModel(opts.model);
 
   log.llm("Prompt received", {
     operation: "chatStream",
@@ -637,6 +660,7 @@ export async function generate(
   options?: Partial<GenerationOptions>
 ): Promise<string> {
   cancelOllamaWarmup("generate request started");
+  await ensureModel(model);
 
   log.llm("Prompt received", { operation: "generate", model, promptLen: prompt.length });
 
@@ -690,6 +714,7 @@ export async function generate(
 export async function embed(texts: string | string[], model?: string): Promise<number[][]> {
   const input = Array.isArray(texts) ? texts : [texts];
   const embedModel = model ?? env.OLLAMA_EMBED_MODEL;
+  await ensureModel(embedModel);
 
   log.llm("Prompt received", {
     operation: "embed",

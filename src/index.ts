@@ -28,8 +28,13 @@ import { log } from "@utils/logger.js";
 import { preloadModel as preloadEmotionModel } from "@emotion/xenova.js";
 import { initSTT as preloadWhisperModel } from "@voice/stt.js";
 
-// ─── Bootstrap Sequence ───────────────────────────────────────────────────────────
+if (isDev) {
+  log.debug("[MODULE_AUDIT]", { module: "index.ts", pid: process.pid });
+}
 async function main(): Promise<void> {
+  if (isDev) {
+  log.debug("[PROCESS_BOOT]", { pid: process.pid, timestamp: new Date().toISOString() });
+}
   const startTime = Date.now();
 
   // 1. Global error handlers
@@ -66,8 +71,9 @@ async function main(): Promise<void> {
 
   // 2. LLM Readiness Check
   if (isLocal) {
-    log.info("Checking Ollama connection...");
     const health = await checkOllamaHealth();
+    if (isDev) log.debug('[HEALTH_CHECK_START]', { pid: process.pid });
+    if (isDev) log.debug('[HEALTH_CHECK_END]', { pid: process.pid, health });
     if (!health.ok) {
       const hasCloudKey = !!(
         env.ANTHROPIC_API_KEY ||
@@ -90,7 +96,7 @@ async function main(): Promise<void> {
       // Ensure required local models are pulled
       log.info("Ensuring required local models are available...");
       try {
-        if (isLocalModel(Models.FAST)) await ensureModel(Models.FAST);
+        if (isLocalModel(Models.FAST)) { if (isDev) log.debug('[ENSURE_MODEL_START]', { modelName: Models.FAST, pid: process.pid }); await ensureModel(Models.FAST); }
         if (isLocalModel(Models.PRIMARY)) await ensureModel(Models.PRIMARY);
         
         // Optional models

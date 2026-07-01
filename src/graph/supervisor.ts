@@ -12,9 +12,13 @@ import { IS_RUNTIME_DEBUG, logPerf, nowMs } from "@utils/perf.js";
 import { ExecutionModeEnum, IntentEnum } from "../runtime/semantic/semanticTypes.js";
 import { normalizeIntent } from "../runtime/semantic/intentDetector.js";
 import { addMessage } from "@memory/shortTerm.js";
+import { detectComplexity } from "../orchestration/complexityDetector.js";
+import { runAgentBus } from "../orchestration/agentBus.js";
+
 const log = createLogger("graph/supervisor");
 
-
+const MODULE_INSTANCE_ID = Math.random().toString(36).slice(2);
+console.log("[MODULE_INSTANCE]", { file: "supervisor.ts", event: "load", id: MODULE_INSTANCE_ID });
 
 let workflowCount = 0;
 
@@ -116,6 +120,8 @@ export async function processMessageStreaming(
   channel: GraphState["channel"] = "tui",
   onToken?: (token: string) => void,
 ): Promise<string> {
+  const requestId = `stream-${Date.now()}`;
+  console.log("[MODULE_INSTANCE]", { file: "supervisor.ts", event: "start", id: MODULE_INSTANCE_ID, requestId });
   const startTime = nowMs();
   workflowCount++;
   if (IS_RUNTIME_DEBUG) {
@@ -150,12 +156,19 @@ export async function processMessageStreaming(
       return deterministicReply;
     }
 
-    const routed = await routeExecutionState(state, input);
-    state = routed.state;
+    const compResult = detectComplexity(input);
+    if (compResult.mode === "multi-agent") {
+      const multiAgentResponse = await runAgentBus({ userGoal: input, requestId });
+      state.response = multiAgentResponse;
+      onToken?.(multiAgentResponse);
+    } else {
+      const routed = await routeExecutionState(state, input);
+      state = routed.state;
 
-    if (!routed.bypassedExecution) {
-      const agentFn = AGENTS[state.targetAgent];
-      state = agentFn ? await agentFn(state) : await taskAgentNode(state);
+      if (!routed.bypassedExecution) {
+        const agentFn = AGENTS[state.targetAgent];
+        state = agentFn ? await agentFn(state) : await taskAgentNode(state);
+      }
     }
 
     if (state.requiresConfirmation && state.pendingConfirmation) {
@@ -182,6 +195,7 @@ export async function processMessageStreaming(
     if (state) {
       state.onToken = undefined;
     }
+    console.log("[MODULE_INSTANCE]", { file: "supervisor.ts", event: "end", id: MODULE_INSTANCE_ID, requestId });
   }
 }
 
@@ -189,6 +203,8 @@ export async function processMessage(
   input: string,
   channel: GraphState["channel"] = "tui",
 ): Promise<string> {
+  const requestId = `msg-${Date.now()}`;
+  console.log("[MODULE_INSTANCE]", { file: "supervisor.ts", event: "start", id: MODULE_INSTANCE_ID, requestId });
   const startTime = nowMs();
   workflowCount++;
   if (IS_RUNTIME_DEBUG) {
@@ -223,12 +239,18 @@ export async function processMessage(
       return deterministicReply;
     }
 
-    const routed = await routeExecutionState(state, input);
-    state = routed.state;
+    const compResult = detectComplexity(input);
+    if (compResult.mode === "multi-agent") {
+      const multiAgentResponse = await runAgentBus({ userGoal: input, requestId });
+      state.response = multiAgentResponse;
+    } else {
+      const routed = await routeExecutionState(state, input);
+      state = routed.state;
 
-    if (!routed.bypassedExecution) {
-      const agentFn = AGENTS[state.targetAgent];
-      state = agentFn ? await agentFn(state) : await taskAgentNode(state);
+      if (!routed.bypassedExecution) {
+        const agentFn = AGENTS[state.targetAgent];
+        state = agentFn ? await agentFn(state) : await taskAgentNode(state);
+      }
     }
 
     if (state.requiresConfirmation && state.pendingConfirmation) {
@@ -255,6 +277,7 @@ export async function processMessage(
     if (state) {
       state.onToken = undefined;
     }
+    console.log("[MODULE_INSTANCE]", { file: "supervisor.ts", event: "end", id: MODULE_INSTANCE_ID, requestId });
   }
 }
 

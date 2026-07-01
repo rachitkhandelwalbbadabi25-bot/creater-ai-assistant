@@ -1,8 +1,9 @@
 import type { ChatMessage } from "./ollama.js";
 import { env } from "@config/index.js";
-import { ProviderAvailability, getProviderForModel, type ModelProvider } from "@config/models.js";
+import { ProviderAvailability, getProviderForModel, type ModelProvider, type GenerationOptions } from "@config/models.js";
 import { createLogger } from "@utils/logger.js";
 import { IS_RUNTIME_DEBUG } from "@utils/perf.js";
+import { withLlmApiRetry } from "../tools/external/api.js";
 
 const log = createLogger("llm/client");
 
@@ -11,7 +12,8 @@ export type { ChatMessage };
 export interface UnifiedChatOptions {
   model: string;
   messages: ChatMessage[];
-  options?: { temperature?: number; top_p?: number; num_predict?: number };
+  // Allow any generation options defined in GenerationOptions (temperature, top_p, top_k, num_predict, repeat_penalty, stop, num_ctx)
+  options?: Partial<GenerationOptions>;
   format?: "json";
 }
 
@@ -25,103 +27,109 @@ async function callOpenAICompatible(
   apiKey: string,
   providerName: string,
 ): Promise<string> {
-  const body = {
-    model: opts.model,
-    messages: opts.messages,
-    max_tokens: opts.options?.num_predict ?? 4096,
-    temperature: opts.options?.temperature ?? 0.7,
-  };
+  return withLlmApiRetry(`llm.${providerName.toLowerCase()}`, async () => {
+    const body = {
+      model: opts.model,
+      messages: opts.messages,
+      max_tokens: opts.options?.num_predict ?? 4096,
+      temperature: opts.options?.temperature ?? 0.7,
+    };
 
-  const res = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
+    const res = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`${providerName} API error ${res.status}: ${err}`);
+    }
+
+    const data = (await res.json()) as { choices: Array<{ message: { content: string } }> };
+    return data.choices[0]?.message?.content?.trim() ?? "";
   });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`${providerName} API error ${res.status}: ${err}`);
-  }
-
-  const data = (await res.json()) as { choices: Array<{ message: { content: string } }> };
-  return data.choices[0]?.message?.content?.trim() ?? "";
 }
 
 async function callAnthropic(opts: UnifiedChatOptions): Promise<string> {
   const apiKey = env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
 
-  const system = opts.messages.find((m) => m.role === "system")?.content ?? "";
-  const userMessages = opts.messages.filter((m) => m.role !== "system");
+  return withLlmApiRetry("llm.anthropic", async () => {
+    const system = opts.messages.find((m) => m.role === "system")?.content ?? "";
+    const userMessages = opts.messages.filter((m) => m.role !== "system");
 
-  const body = {
-    model: opts.model,
-    max_tokens: opts.options?.num_predict ?? 4096,
-    temperature: opts.options?.temperature ?? 0.7,
-    ...(system ? { system } : {}),
-    messages: userMessages,
-  };
+    const body = {
+      model: opts.model,
+      max_tokens: opts.options?.num_predict ?? 4096,
+      temperature: opts.options?.temperature ?? 0.7,
+      ...(system ? { system } : {}),
+      messages: userMessages,
+    };
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify(body),
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Anthropic API error ${res.status}: ${err}`);
+    }
+
+    const data = (await res.json()) as { content: Array<{ type: string; text: string }> };
+    return data.content.map((c) => c.text).join("").trim();
   });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Anthropic API error ${res.status}: ${err}`);
-  }
-
-  const data = (await res.json()) as { content: Array<{ type: string; text: string }> };
-  return data.content.map((c) => c.text).join("").trim();
 }
 
 async function callGemini(opts: UnifiedChatOptions): Promise<string> {
   const apiKey = env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY not set");
 
-  const contents = opts.messages
-    .filter((m) => m.role !== "system")
-    .map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
-  const systemText = opts.messages.find((m) => m.role === "system")?.content;
+  return withLlmApiRetry("llm.gemini", async () => {
+    const contents = opts.messages
+      .filter((m) => m.role !== "system")
+      .map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
+    const systemText = opts.messages.find((m) => m.role === "system")?.content;
 
-  const body: Record<string, unknown> = {
-    contents,
-    generationConfig: {
-      maxOutputTokens: opts.options?.num_predict ?? 4096,
-      temperature: opts.options?.temperature ?? 0.7,
-    },
-  };
-  if (systemText) {
-    body.systemInstruction = { parts: [{ text: systemText }] };
-  }
+    const body: Record<string, unknown> = {
+      contents,
+      generationConfig: {
+        maxOutputTokens: opts.options?.num_predict ?? 4096,
+        temperature: opts.options?.temperature ?? 0.7,
+      },
+    };
+    if (systemText) {
+      body.systemInstruction = { parts: [{ text: systemText }] };
+    }
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${opts.model}:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-  );
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${opts.model}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Gemini API error ${res.status}: ${err}`);
-  }
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Gemini API error ${res.status}: ${err}`);
+    }
 
-  const data = (await res.json()) as {
-    candidates: Array<{ content: { parts: Array<{ text: string }> } }>;
-  };
-  return data.candidates[0]?.content?.parts?.map((p) => p.text).join("").trim() ?? "";
+    const data = (await res.json()) as {
+      candidates: Array<{ content: { parts: Array<{ text: string }> } }>;
+    };
+    return data.candidates[0]?.content?.parts?.map((p) => p.text).join("").trim() ?? "";
+  });
 }
 
 async function fallbackToLocal(opts: UnifiedChatOptions): Promise<string> {

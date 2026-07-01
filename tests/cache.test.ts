@@ -17,7 +17,7 @@ describe("Memory Cache Layer Tests", () => {
   test("Cache TTL expiration works", async () => {
     const tempCache = new MemoryCache({ ttlMs: 10 });
     tempCache.set("temp-key", "val");
-    expect(tempCache.get("temp-key")!).toBe("val");
+    expect(tempCache.get("temp-key") as any).toEqual("val");
 
     // Wait for TTL expiration
     await new Promise(resolve => setTimeout(resolve, 20));
@@ -33,14 +33,14 @@ describe("Memory Cache Layer Tests", () => {
     tinyCache.get("k1");
     
     tinyCache.set("k3", "v3");
-expect(tinyCache.get("k1")!).toBe("v1");
-expect(tinyCache.get("k2")).toBeNull(); // evicted
-expect(tinyCache.get("k3")!).toBe("v3");
+    expect(tinyCache.get("k1") as any).toEqual("v1");
+    expect(tinyCache.get("k2")).toBeNull(); // evicted
+    expect(tinyCache.get("k3") as any).toEqual("v3");
   });
 
   test("Cache Invalidation works", () => {
     setCached("graph", "graph-key", "graph-value");
-    expect(getCached("graph", "graph-key")).toBe("graph-value");
+    expect(getCached("graph", "graph-key") as any).toEqual("graph-value");
     
     invalidateCache("graph", "graph-key");
     expect(getCached("graph", "graph-key")).toBeNull();

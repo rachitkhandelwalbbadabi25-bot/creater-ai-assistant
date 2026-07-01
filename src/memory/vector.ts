@@ -8,8 +8,28 @@ import { env } from "@config/index.js";
 import { embedSingle, embed } from "@llm/ollama.js";
 import { createLogger } from "@utils/logger.js";
 import { generateId } from "@utils/helpers.js";
+import { executeTool } from "../agents/toolExecutor.js";
 
 const log = createLogger("memory/vector");
+
+const metrics = {
+  retryCount: 0,
+  timeoutCount: 0,
+  failedEmbeddings: 0,
+  failedVectorWrites: 0,
+  totalLatencyMs: 0,
+  totalOperations: 0,
+};
+
+export function getMemoryMetrics() {
+  return {
+    retryCount: metrics.retryCount,
+    timeoutCount: metrics.timeoutCount,
+    failedEmbeddings: metrics.failedEmbeddings,
+    failedVectorWrites: metrics.failedVectorWrites,
+    averageLatencyMs: metrics.totalOperations > 0 ? metrics.totalLatencyMs / metrics.totalOperations : 0,
+  };
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────────
 export interface VectorEntry {
@@ -58,8 +78,16 @@ export function initVectorStore(): void {
  * Persist current vector store to disk.
  */
 export function saveVectorStore(): void {
-  writeFileSync(STORE_PATH, JSON.stringify(entries), "utf-8");
-  log.mem(`Saved ${entries.length} vectors to disk`);
+  try {
+    writeFileSync(STORE_PATH, JSON.stringify(entries), "utf-8");
+    log.mem(`Saved ${entries.length} vectors to disk`);
+  } catch (e) {
+    log.error("Failed to persist vector store to disk", {
+      success: false,
+      operation: "saveVectorStore",
+      error: String(e),
+    });
+  }
 }
 
 // ─── Core Operations ──────────────────────────────────────────────────────────────
@@ -72,10 +100,42 @@ export async function addEntry(
   metadata: Record<string, unknown> = {}
 ): Promise<VectorEntry> {
   let vector: number[];
-  try {
-    vector = await embedSingle(text);
-  } catch (e) {
-    log.warn("Failed to generate embedding for vector entry — using fallback empty vector", { error: String(e) });
+  const start = Date.now();
+  console.log("[VECTOR_WRITE_START]", "addEntry");
+  console.log("[MEMORY_RETRY_START]", "embedSingle");
+
+  const res = await executeTool(
+    async () => await embedSingle(text),
+    {
+      maxAttempts: 3,
+      baseDelayMs: 300,
+      timeoutMs: 30000,
+    }
+  );
+
+  const duration = Date.now() - start;
+  metrics.totalLatencyMs += duration;
+  metrics.totalOperations++;
+
+  if (res.success) {
+    console.log("[MEMORY_RETRY_SUCCESS]", "embedSingle");
+    console.log("[VECTOR_WRITE_SUCCESS]", "addEntry");
+    vector = res.result as number[];
+    if (res.attempts > 1) {
+      metrics.retryCount += (res.attempts - 1);
+    }
+  } else {
+    console.log("[MEMORY_RETRY_FAILED]", "embedSingle");
+    metrics.failedEmbeddings++;
+    metrics.failedVectorWrites++;
+    if (res.error?.includes("timeout")) {
+      metrics.timeoutCount++;
+    }
+    log.error("Failed to generate embedding for vector entry", {
+      success: false,
+      operation: "addEntry",
+      error: res.error,
+    });
     vector = new Array(768).fill(0);
   }
   
@@ -104,10 +164,42 @@ export async function addEntries(
 ): Promise<VectorEntry[]> {
   const texts = items.map((i) => i.text);
   let vectors: number[][];
-  try {
-    vectors = await embed(texts);
-  } catch (e) {
-    log.warn("Failed to generate batch embedding — using fallback empty vectors", { error: String(e) });
+  const start = Date.now();
+  console.log("[VECTOR_WRITE_START]", "addEntries");
+  console.log("[MEMORY_RETRY_START]", "embed");
+
+  const res = await executeTool(
+    async () => await embed(texts),
+    {
+      maxAttempts: 3,
+      baseDelayMs: 300,
+      timeoutMs: 30000,
+    }
+  );
+
+  const duration = Date.now() - start;
+  metrics.totalLatencyMs += duration;
+  metrics.totalOperations++;
+
+  if (res.success) {
+    console.log("[MEMORY_RETRY_SUCCESS]", "embed");
+    console.log("[VECTOR_WRITE_SUCCESS]", "addEntries");
+    vectors = res.result as number[][];
+    if (res.attempts > 1) {
+      metrics.retryCount += (res.attempts - 1);
+    }
+  } else {
+    console.log("[MEMORY_RETRY_FAILED]", "embed");
+    metrics.failedEmbeddings++;
+    metrics.failedVectorWrites += items.length;
+    if (res.error?.includes("timeout")) {
+      metrics.timeoutCount++;
+    }
+    log.error("Failed to generate batch embedding", {
+      success: false,
+      operation: "addEntries",
+      error: res.error,
+    });
     vectors = items.map(() => new Array(768).fill(0));
   }
 
@@ -136,11 +228,39 @@ export async function search(
 ): Promise<SearchResult[]> {
   if (entries.length === 0) return [];
 
+  const start = Date.now();
+  console.log("[VECTOR_SEARCH_START]", query);
+
+  const res = await executeTool(
+    async () => await embedSingle(query),
+    {
+      maxAttempts: 2,
+      baseDelayMs: 200,
+      timeoutMs: 10000,
+    }
+  );
+
+  const duration = Date.now() - start;
+  metrics.totalLatencyMs += duration;
+  metrics.totalOperations++;
+
   let queryVector: number[];
-  try {
-    queryVector = await embedSingle(query);
-  } catch (e) {
-    log.warn("Failed to generate embedding for search query — returning empty results", { error: String(e) });
+  if (res.success) {
+    console.log("[VECTOR_SEARCH_SUCCESS]", query);
+    queryVector = res.result as number[];
+    if (res.attempts > 1) {
+      metrics.retryCount += (res.attempts - 1);
+    }
+  } else {
+    metrics.failedEmbeddings++;
+    if (res.error?.includes("timeout")) {
+      metrics.timeoutCount++;
+    }
+    log.error("Failed to generate embedding for search query", {
+      success: false,
+      operation: "vector_search",
+      error: res.error,
+    });
     return [];
   }
 

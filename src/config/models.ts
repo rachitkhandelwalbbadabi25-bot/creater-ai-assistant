@@ -182,6 +182,7 @@ export interface GenerationOptions {
   num_predict: number;   // Max tokens to generate
   repeat_penalty: number;
   stop?: string[];
+  num_ctx?: number;      // Context window size (Ollama-specific, optional)
 }
 
 /**

@@ -7,6 +7,7 @@ import { getHealthStatus } from "./health.js";
 import { getActiveAlerts } from "./alerts.js";
 
 import { getResilienceMetrics } from "../resilience/resilienceMetrics.js";
+import { getIntelligenceTelemetry } from "../intelligence/intelligenceMetrics.js";
 
 export async function getDashboard() {
   const system = getSystemMetrics();
@@ -17,6 +18,7 @@ export async function getDashboard() {
   const health = await getHealthStatus();
   const alerts = getActiveAlerts();
   const resilience = getResilienceMetrics();
+  const intelligence = getIntelligenceTelemetry();
 
   return {
     uptime: system.uptimeMs,
@@ -29,7 +31,9 @@ export async function getDashboard() {
       tools,
       api,
       resilience,
+      intelligence,
       memory: system.memoryUsage,
     },
   };
 }
+

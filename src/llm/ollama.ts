@@ -16,7 +16,10 @@ import { latencyTracker } from "@utils/latencyTracker.js";
 import { execSync } from "child_process";
 
 const MODULE_INSTANCE_ID = Math.random().toString(36).slice(2);
+let initCount = 0;
 console.log("[MODULE_INSTANCE]", { file: "ollama.ts", event: "load", id: MODULE_INSTANCE_ID });
+initCount++;
+console.log("[OLLAMA_INIT_COUNT]", { initCount });
 
 const log = createLogger("llm/ollama");
 
@@ -414,6 +417,7 @@ export async function ensureModel(modelName: string): Promise<void> {
     if (isDev) log.debug('[ENSURE_MODEL_START]', { requestId, pid: process.pid, modelName });
     
     const models = await listOllamaModels();
+console.log("[ENSURE_MODEL]", { modelName, models });
     const hasTag = modelName.includes(":");
     const normalizedName = hasTag ? modelName : `${modelName}:latest`;
     const exists = models.some(m => {
@@ -494,6 +498,9 @@ export async function chat(opts: ChatOptions): Promise<string> {
           messages: opts.messages,
         });
         const t0 = performance.now();
+        console.log("[BEFORE_CHAT]");
+        const psBefore = await client.ps();
+        console.log("[PS_BEFORE]", psBefore);
         const result = await withTimeout(
           client.chat({
             model: opts.model,
@@ -507,6 +514,9 @@ export async function chat(opts: ChatOptions): Promise<string> {
           `Chat with ${opts.model}`
         );
         console.log("[NON_STREAM_TOTAL_MS]", Math.round(performance.now() - t0));
+        console.log("[AFTER_CHAT]");
+        const psAfter = await client.ps();
+        console.log("[PS_AFTER]", psAfter);
         return result as unknown as ChatResponse;
       },
       2,
@@ -526,6 +536,24 @@ export async function chat(opts: ChatOptions): Promise<string> {
           : "unknown",
       stream: false,
     });
+
+    // Execute ollama ps after response generation
+    try {
+      const psResult = execSync("ollama ps", { timeout: 3000 }).toString().trim();
+      console.log("[OLLAMA_PS_OUTPUT]", psResult);
+      const lines = psResult.split("\n");
+      if (lines.length > 1) {
+        const headers = lines[0].trim().split(/\s+/);
+        for (const row of lines.slice(1)) {
+          const cols = row.trim().split(/\s+/);
+          const obj: Record<string, string> = {};
+          headers.forEach((h, i) => { obj[h] = cols[i]; });
+          console.log("[OLLAMA_PS_ROW]", obj);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to run ollama ps", e);
+    }
 
     return content.trim();
   });

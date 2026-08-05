@@ -1,7 +1,4 @@
-// ════════════════════════════════════════════════════════════════════════════════
-// src/llm/router.ts — Smart model selection based on intent and task type
-// ════════════════════════════════════════════════════════════════════════════════
-
+// Updated LLM router to use semantic intent detection before quick keyword fallback
 import { chat, type ChatMessage } from "./client.js";
 import { INTENT_CLASSIFICATION_PROMPT } from "./prompts.js";
 import { Models, getModelForTask, getPresetForTask, GenerationPresets } from "@config/models.js";
@@ -9,11 +6,13 @@ import { env } from "@config/index.js";
 import { setSetting } from "@config/settings.js";
 import { createLogger } from "@utils/logger.js";
 import { safeAsync, type Result } from "@utils/errorHandler.js";
-
-import { IntentEnum } from "../runtime/semantic/semanticTypes.js";
+// Existing imports
+import { IntentEnum, type SemanticResult } from "../runtime/semantic/semanticTypes.js";
+import { detectIntent as detectSemanticIntent } from "../runtime/semantic/intentDetector.js";
+// New import for deterministic research intent detection
+import { detectResearchIntent } from "../runtime/intent/detectResearchIntent.js";
 
 const log = createLogger("llm/router");
-
 
 // ─── Intent Classification Result ─────────────────────────────────────────────────
 export interface IntentResult {
@@ -31,7 +30,6 @@ export interface RouteDecision {
 }
 
 // ─── Manual Override State ────────────────────────────────────────────────────────
-// ─── Manual Override State (Persisted in SQLite) ──────────────────────────────────
 export function setModelOverride(modelName: string | null) {
   setSetting("DEFAULT_MODEL", modelName || "");
   if (modelName) {
@@ -60,9 +58,11 @@ const INTENT_TO_AGENT: Record<string, string> = {
   knowledge_qa: "taskAgent",
   scheduling: "taskAgent",
   meta: "taskAgent",
+  // New research intents
+  [IntentEnum.RESEARCH_TASK]: "plannerAgent",
+  [IntentEnum.BROWSER_RESEARCH_TASK]: "plannerAgent",
 };
 
-// ─── Quick Keyword Route ─────────────────────────────────────────────────────────
 // ─── Quick Keyword Route ─────────────────────────────────────────────────────────
 function quickKeywordRoute(message: string): IntentResult | null {
   const msg = message.toLowerCase();
@@ -92,24 +92,55 @@ function quickKeywordRoute(message: string): IntentResult | null {
 
 // ─── Classify Intent ──────────────────────────────────────────────────────────────
 /**
- * Uses the FAST model to quickly classify user intent.
- * Returns structured intent with confidence score.
+ * Uses deterministic detection (semantic intent detector) first, then quick keyword
+ * fallback, and finally optional LLM fallback controlled by env flag.
  */
 export async function classifyIntent(
   userMessage: string
 ): Promise<Result<IntentResult>> {
   const start = Date.now();
-  // First try deterministic detection
+
+  // 1️⃣ Semantic deterministic detection (covers RESEARCH_TASK, BROWSER_RESEARCH_TASK, etc.)
+  try {
+    const semantic: SemanticResult = detectSemanticIntent(userMessage);
+    if (semantic && semantic.intent && semantic.intent !== IntentEnum.CONVERSATION) {
+      const duration = Date.now() - start;
+      log.info(`Semantic intent detection: ${semantic.intent} (${duration}ms)`, {
+        method: "semantic",
+        confidence: semantic.confidence,
+      });
+      return {
+        ok: true,
+        value: {
+          intent: semantic.intent,
+          confidence: semantic.confidence,
+          entities: semantic.entities || {},
+        },
+      } as any;
+    }
+  } catch (e) {
+    log.warn(`Semantic intent detection error: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // 2️⃣ Quick keyword deterministic detection (fallback for simple cases)
   const deterministic = quickKeywordRoute(userMessage);
+
+  // 2.5️⃣ Deterministic research intent detection (fallback if quickKeyword didn't match)
+  const researchIntent = detectResearchIntent(userMessage);
+  if (researchIntent) {
+    const dur = Date.now() - start;
+    log.info(`Research intent detection: ${researchIntent} (${dur}ms)`, { method: "researchDetect" });
+    return { ok: true, value: { intent: researchIntent, confidence: 0.95, entities: {} } } as any;
+  }
   if (deterministic) {
     const duration = Date.now() - start;
-    log.info(`Deterministic intent detection: ${deterministic.intent} (${duration}ms)`, {
-      method: "deterministic",
+    log.info(`Quick keyword intent detection: ${deterministic.intent} (${duration}ms)`, {
+      method: "quickKeyword",
     });
     return { ok: true, value: deterministic } as any;
   }
 
-  // Optional LLM fallback – controlled by env flag
+  // 3️⃣ Optional LLM fallback – controlled by env flag
   if (env.USE_LLM_ROUTER) {
     try {
       const messages: ChatMessage[] = [
@@ -139,22 +170,23 @@ export async function classifyIntent(
       return { ok: true, value: parsed } as any;
     } catch (e) {
       const duration = Date.now() - start;
-      log.warn(`Intent classification LLM failed: ${e instanceof Error ? e.message : String(e)}. Falling back to chitchat. (${duration}ms)`);
+      log.warn(`Intent classification LLM failed: ${e instanceof Error ? e.message : String(e)}. Falling back to conversation. (${duration}ms)`);
       return { ok: true, value: { intent: IntentEnum.CONVERSATION, confidence: 0.5, entities: {} } } as any;
     }
   }
 
-  // No deterministic match and LLM fallback disabled – default to chitchat
+  // 4️⃣ No deterministic match and LLM fallback disabled – default to conversation
   const duration = Date.now() - start;
-  log.info(`No intent match and LLM fallback disabled. Defaulting to chitchat (${duration}ms)`, {
+  log.info(`No intent match and LLM fallback disabled. Defaulting to conversation (${duration}ms)`, {
     method: "fallback",
   });
   return { ok: true, value: { intent: IntentEnum.CONVERSATION, confidence: 0.5, entities: {} } } as any;
 }
+
 // ─── Route Request ────────────────────────────────────────────────────────────────
 /**
  * Full routing pipeline:
- * 1. Classify the user's intent (deterministic first, optional LLM fallback)
+ * 1. Classify the user's intent (semantic first, quick keyword second, optional LLM).
  * 2. Select the appropriate model + generation preset
  * 3. Determine which agent should handle the request
  */
@@ -187,7 +219,6 @@ export async function routeRequest(
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────────
-
 function getPresetKeyForIntent(intent: string): keyof typeof GenerationPresets {
   if (intent.includes("code") || intent.includes("git")) return "coding";
   if (
@@ -195,11 +226,13 @@ function getPresetKeyForIntent(intent: string): keyof typeof GenerationPresets {
     intent === "conversation" ||
     intent === IntentEnum.CONVERSATION ||
     intent === "emotion_support"
-  ) return "conversational";
+  )
+    return "conversational";
   if (
     intent === "intent_classification" ||
     intent === "routing"
-  ) return "classification";
+  )
+    return "classification";
   return "precise";
 }
 

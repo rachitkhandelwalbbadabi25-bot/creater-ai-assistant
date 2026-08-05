@@ -35,15 +35,24 @@ const REGEX = {
 };
 interface DeterministicSearchRoute {
   browser?: "chrome" | "edge" | "firefox";
-  provider: "google" | "youtube";
+  provider: "google" | "youtube" | "github" | "amazon" | "wikipedia";
   query: string;
   url: string;
 }
 
-function buildSearchUrl(provider: "google" | "youtube", query: string): string {
-  return provider === "youtube"
-    ? `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`
-    : `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+function buildSearchUrl(provider: "google" | "youtube" | "github" | "amazon" | "wikipedia", query: string): string {
+  switch (provider) {
+    case "youtube":
+      return `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+    case "github":
+      return `https://github.com/search?q=${encodeURIComponent(query)}`;
+    case "amazon":
+      return `https://www.amazon.in/s?k=${encodeURIComponent(query)}`;
+    case "wikipedia":
+      return `https://en.wikipedia.org/wiki/Special:Search?search=${encodeURIComponent(query)}`;
+    default:
+      return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+  }
 }
 
 function parseDeterministicSearchCommand(input: string): DeterministicSearchRoute | null {
@@ -101,13 +110,12 @@ const getSiteDisplayName = (site: string): string => {
 async function executeDeterministicSearch(state: GraphState): Promise<string | null> {
   let route = parseDeterministicSearchCommand(state.currentInput);
   if (!route && state.intent === IntentEnum.BROWSER_SEARCH) {
-    const extraction = extractQuery(state.currentInput);
-    const query = extraction ? extraction.query : state.currentInput;
-    route = {
-      provider: "google",
-      query,
-      url: buildSearchUrl("google", query)
-    };
+    // Fallback deterministic detection using provider detection and query cleaning
+    const provider = detectSearchProvider(state.currentInput);
+    const query = cleanSearchQuery(state.currentInput);
+    if (query) {
+      route = { provider, query, url: buildSearchUrl(provider as any, query) };
+    }
   }
 
   if (!route) {
@@ -126,6 +134,8 @@ async function executeDeterministicSearch(state: GraphState): Promise<string | n
   // Stream feedback immediately
   state.onToken?.(feedback);
 
+  // Debug logging for provider detection
+  log.info("PROVIDER DETECTION", { command: state.currentInput, provider: route.provider, query: route.query });
   log.info("DETERMINISTIC SEARCH WORKFLOW DETECTED", {
     browser: route.browser ?? "default",
     provider: route.provider,
@@ -171,6 +181,41 @@ function normalizeDirectOpenTarget(input: string): string {
     .replace(/\b(open|launch|start)\b/g, "")
     // Strip browser specifiers — must be removed BEFORE target extraction
     .replace(/\b(?:on|in|using)\s+(?:chrome|edge|firefox)\b/gi, "")
+    .trim();
+}
+
+// New helper: Detect which search provider is intended based on keywords
+function detectSearchProvider(command: string): "youtube" | "github" | "amazon" | "wikipedia" | "google" {
+  const lower = command.toLowerCase();
+  if (lower.includes("youtube") || lower.includes("on youtube") || lower.includes("in youtube")) {
+    return "youtube";
+  }
+  if (lower.includes("github") || lower.includes("on github")) {
+    return "github";
+  }
+  if (lower.includes("amazon") || lower.includes("on amazon")) {
+    return "amazon";
+  }
+  if (lower.includes("wikipedia") || lower.includes("on wikipedia")) {
+    return "wikipedia";
+  }
+  return "google";
+}
+
+// New helper: Clean the raw command into a search query string
+function cleanSearchQuery(command: string): string {
+  return command
+    .replace(/^open\s+/i, "")
+    .replace(/^search\s+/i, "")
+    .replace(/\s+on youtube$/i, "")
+    .replace(/\s+in youtube$/i, "")
+    .replace(/\s+on github$/i, "")
+    .replace(/\s+on amazon$/i, "")
+    .replace(/\s+on wikipedia$/i, "")
+    .replace(/\s+youtube$/i, "")
+    .replace(/\s+github$/i, "")
+    .replace(/\s+amazon$/i, "")
+    .replace(/\s+wikipedia$/i, "")
     .trim();
 }
 

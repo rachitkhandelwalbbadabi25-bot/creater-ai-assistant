@@ -1,0 +1,12 @@
+{
+  "persist-test": {
+    "taskId": "persist-test",
+    "status": "completed",
+    "steps": [],
+    "outputs": [],
+    "artifacts": [],
+    "errors": [],
+    "createdAt": "2026-07-03T12:35:41.483Z",
+    "updatedAt": "2026-07-03T12:35:41.483Z"
+  }
+}

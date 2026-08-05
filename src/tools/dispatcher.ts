@@ -26,7 +26,8 @@ const FAST_TOOLS: Record<string, ToolHandler> = {
   "system.notify": async () => ({ success: true, message: "Notification sent (mock)" }),
   "system.open_app": (params) => launcherTools.openApp(params.app as string),
   "system.open_path": (params) => launcherTools.openFileOrPath(params.path as string),
-  "browser.navigate": (params) => launcherTools.openUrl(params.url as string),
+  // "browser.navigate" now uses Playwright via heavy loader
+  // Removed fast tool mapping to avoid OS-level URL opening
   "editor.open_file": (params) => editorTools.openInVSCode(params.path as string, params.line as number | undefined),
   "git.status": (params) => editorTools.gitStatus(params.repo_path as string),
   "git.commit": (params) => editorTools.gitCommit(params.repo_path as string, params.message as string),
@@ -40,6 +41,11 @@ const HEAVY_TOOL_LOADERS: Record<string, () => Promise<ToolHandler>> = {
   "browser.screenshot": async () => {
     const browserTools = await import("./laptop/browser.js");
     return (params) => browserTools.takeScreenshot(params.url as string, (params.savePath as string | undefined) || `./screenshot_${Date.now()}.png`);
+  },
+  // New heavy loader for navigation using Playwright
+  "browser.navigate": async () => {
+    const browserTools = await import("./laptop/browser.js");
+    return (params) => browserTools.navigateToUrl(params.url as string);
   },
   "computer.open_browser": async () => {
     const computerTools = await import("./laptop/computer.js");

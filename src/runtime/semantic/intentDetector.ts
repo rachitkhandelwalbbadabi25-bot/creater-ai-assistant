@@ -44,6 +44,12 @@ export function normalizeIntent(intent: string): IntentEnum {
   if (lower === "information_search" || lower === IntentEnum.INFORMATION_SEARCH) {
     return IntentEnum.INFORMATION_SEARCH;
   }
+  if (lower === "research_task" || lower === IntentEnum.RESEARCH_TASK) {
+    return IntentEnum.RESEARCH_TASK;
+  }
+  if (lower === "browser_research_task" || lower === IntentEnum.BROWSER_RESEARCH_TASK) {
+    return IntentEnum.BROWSER_RESEARCH_TASK;
+  }
   if (
     lower === "conversation" ||
     lower === IntentEnum.CONVERSATION ||
@@ -94,6 +100,18 @@ export function detectIntent(rawInput: string): SemanticResult {
 
     return result;
   };
+
+  // Detection for complex research tasks
+  const hasSummaryIndicators = includesAny(lowerInput, ["summary", "summarize", "tell me", "give me", "explain"]);
+  if (hasSearchIndicators && hasSummaryIndicators) {
+    if (hasLaunchIndicators) {
+      // Example: "Open Google, search AI agents, and give me a summary"
+      return buildResult(IntentEnum.BROWSER_RESEARCH_TASK, 0.96, "deterministic");
+    } else {
+      // Example: "Search AI agents and summarize"
+      return buildResult(IntentEnum.RESEARCH_TASK, 0.96, "deterministic");
+    }
+  }
 
   // Final safety override layer (Bug 4)
   if (extractedQuery && extractedQuery.length > 2) {

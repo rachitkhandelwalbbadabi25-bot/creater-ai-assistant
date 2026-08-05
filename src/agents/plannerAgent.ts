@@ -39,23 +39,64 @@ function selectAgents(complexity: "low" | "medium" | "high"): string[] {
   return base; // high complexity – include all agents
 }
 
-/** Generate a naive step list – can be refined later */
-function generateSteps(goal: string, agents: string[]): string[] {
-  const steps: string[] = [];
-  agents.forEach((agent) => {
-    steps.push(`${agent} will process the goal`);
-  });
-  steps.push(`final response will be composed`);
-  return steps;
+/** Parse user goal into concrete action-phrase steps the executionAgent keyword-router can match */
+function generateSteps(goal: string, _agents: string[]): string[] {
+  const g = goal.toLowerCase();
+
+  // ── Browser research / search workflow ──────────────────────────────────────
+  const isBrowserSearch =
+    (g.includes("open") && (g.includes("google") || g.includes("browser"))) ||
+    g.includes("search") ||
+    g.includes("look up") ||
+    g.includes("find on") ||
+    g.includes("research");
+
+  if (isBrowserSearch) {
+    // Extract the search query from the goal
+    let query = "";
+
+    // Patterns: "search AI agents", "search for AI agents", "look up AI agents"
+    const searchMatch =
+      goal.match(/search\s+(?:for\s+)?["']?([^"'.]+)["']?/i) ||
+      goal.match(/look\s+up\s+["']?([^"'.]+)["']?/i) ||
+      goal.match(/research\s+["']?([^"'.]+)["']?/i);
+    if (searchMatch) {
+      query = searchMatch[1].replace(/\s+and\s+.*/i, "").trim();
+    }
+
+    // Detect target provider
+    let url = "https://www.google.com";
+    if (g.includes("youtube")) url = "https://www.youtube.com";
+    else if (g.includes("github")) url = "https://www.github.com";
+
+    const steps: string[] = [
+      "open browser",
+      `navigate to ${url}`,
+    ];
+    if (query) {
+      steps.push(`search for "${query}"`);
+    }
+    steps.push("extract text and summarize findings");
+    return steps;
+  }
+
+  // ── Generic fallback: one step per word-group ────────────────────────────────
+  return [
+    `process goal: ${goal}`,
+    "final response will be composed",
+  ];
 }
 
 export async function plannerAgent(context: AgentSharedContext & { userGoal: string }): Promise<AgentResult<PlannerOutput>> {
+  log.info('[PLANNER_AGENT_START]');
   const started = nowMs();
-  log.info("[LLM_CALL] none (plannerAgent)");
+  log.info('[LLM_CALL] none (plannerAgent)');
   const { userGoal } = context;
   const complexity = estimateComplexity(userGoal);
+  log.info('[PLANNER_AGENT_AFTER_COMPLEXITY]', { complexity });
   const requiredAgents = selectAgents(complexity);
   const steps = generateSteps(userGoal, requiredAgents);
+  log.info('[PLANNER_AGENT_AFTER_STEPS]', { stepsCount: steps.length });
   const output: PlannerOutput = {
     goal: userGoal,
     complexity,
@@ -63,7 +104,9 @@ export async function plannerAgent(context: AgentSharedContext & { userGoal: str
     steps,
   };
   logPerf(log, "Planner completed", started, { complexity, agents: requiredAgents.length });
+  log.info('[PLANNER_AGENT_RETURN]');
   return { result: output, metadata: { timingMs: nowMs() - started } };
 }
+
 
 export default plannerAgent;

@@ -24,10 +24,12 @@ export async function analyzePerformance(): Promise<Record<string, number>> {
 }
 
 /** Generate a list of optimizations based on recent experiences */
-export export function generateOptimisationPlan() {
+export function generateOptimisationPlan() {
   const suggestions = generateOptimizations();
   return { suggestions };
 }
+
+export function generateOptimizations(): Optimization[] {
   const experiences = getExperiences().slice(-100); // recent 100
   const suggestions: Optimization[] = [];
 

@@ -5,6 +5,7 @@ import { laptopAgentNode } from "./laptopAgent.js";
 import { projectAgentNode } from "./projectAgent.js";
 import { skillAgentNode } from "./skillAgent.js";
 import { createLogger } from "@utils/logger.js";
+import plannerAgentNode from "../agents/plannerAgent.js";
 import { formatErrorForUser } from "@utils/errorHandler.js";
 import { classifyRuntimeMode } from "../runtime/RuntimeModeClassifier.js";
 import { logMemorySnapshot } from "@utils/memory.js";
@@ -13,9 +14,65 @@ import { ExecutionModeEnum, IntentEnum } from "../runtime/semantic/semanticTypes
 import { normalizeIntent } from "../runtime/semantic/intentDetector.js";
 import { addMessage } from "@memory/shortTerm.js";
 import { detectComplexity } from "../orchestration/complexityDetector.js";
+import executionAgentNode from "../agents/executionAgent.js";
 import { runAgentBus } from "../orchestration/agentBus.js";
 
 const log = createLogger("graph/supervisor");
+
+// Wrapper to adapt GraphState to plannerAgentNode signature
+async function plannerAgentWrapper(state: GraphState): Promise<GraphState> {
+  try {
+    log.info('[PLANNER_WRAPPER_START]');
+    // Minimal shared context for plannerAgent
+    const context = {
+      requestId: `planner-${Date.now()}`,
+      executionMode: "legacy" as const,
+      userGoal: state.currentInput,
+    };
+    // Call plannerAgentNode (default export) which returns PlannerOutput
+    const result = await plannerAgentNode(context);
+    log.info('[PLANNER_WRAPPER_AFTER_AGENT]');
+    // Store planner output in the graph state for downstream agents
+    state.plan = result.result.steps;
+    log.info('[PLANNER_WRAPPER_AFTER_PLAN]');
+    // Optionally set a provisional response indicating planning completed
+    state.response = "Planner generated plan.";
+    // After planning, forward to taskAgent for execution
+    state.targetAgent = "taskAgent";
+    log.info('[PLANNER_WRAPPER_RETURN]');
+    return state;
+  } catch (err) {
+    log.error('[PLANNER_WRAPPER_ERROR]', err);
+    throw err;
+  }
+}
+
+// Wrapper to adapt GraphState to executionAgentNode signature
+async function executionAgentWrapper(state: GraphState): Promise<GraphState> {
+  const requestId = `exec-${Date.now()}`;
+  log.info('[EXECUTION_AGENT_DISPATCH]', { requestId, userGoal: state.currentInput });
+  log.info('[EXECUTION_AGENT_START]', { requestId });
+  const context = {
+    requestId,
+    executionMode: "legacy" as const,
+    userGoal: state.currentInput,
+    plan: state.plan,
+    // executionAgent reads context.plannerAgentOutput?.steps — wire it here
+    plannerAgentOutput: { steps: state.plan ?? [] },
+  };
+  const { result } = await executionAgentNode(context);
+
+  const finalOutput = result.outputs?.[result.outputs.length - 1];
+  if (finalOutput && finalOutput.status === "success" && finalOutput.detail) {
+    state.response = finalOutput.detail;
+  } else if (result && result.stepsExecuted?.length) {
+    state.response = `Executed steps: ${result.stepsExecuted.join(', ')}`;
+  }
+  // Ensure the redispatch loop exits
+  state.targetAgent = "";
+  return state;
+}
+
 
 const MODULE_INSTANCE_ID = Math.random().toString(36).slice(2);
 console.log("[MODULE_INSTANCE]", { file: "supervisor.ts", event: "load", id: MODULE_INSTANCE_ID });
@@ -29,6 +86,8 @@ const AGENTS: Record<string, AgentNode> = {
   emotionAgent: emotionAgentNode,
   laptopAgent: laptopAgentNode,
   projectAgent: projectAgentNode,
+  plannerAgent: plannerAgentWrapper,
+  executionAgent: executionAgentWrapper,
   skillAgent: skillAgentNode,
 };
 
@@ -74,6 +133,7 @@ async function routeExecutionState(
     // Additional isolation logic can be added here if needed
   }
 
+  console.log(`[INTENT_BEFORE_ROUTER] requestId=N/A intent=${state.intent} targetAgent=${state.targetAgent} currentStep=${state.currentStep} selectedModel=${state.selectedModel}`);
   if (runtimeClassification.mode === "execution") {
     if (IS_RUNTIME_DEBUG) {
       log.info("Execution intent bypassing conversational routing", {
@@ -102,12 +162,14 @@ async function routeExecutionState(
       }),
       bypassedExecution: true,
     };
+    console.log(`[INTENT_AFTER_ROUTER] bypassedExecution=true requestId=N/A intent=${result.state.intent} targetAgent=${result.state.targetAgent} currentStep=${result.state.currentStep} selectedModel=${result.state.selectedModel}`);
     logPerf(log, "routeExecutionState completed", startedAt, { mode: runtimeClassification.mode });
     return result;
   }
 
   // Set intent to conversation for non‑execution modes to avoid UNKNOWN logs
   const routedState = await routeConversationalState({ ...state, intent: IntentEnum.CONVERSATION });
+  console.log(`[INTENT_AFTER_ROUTER] bypassedExecution=false requestId=N/A intent=${routedState.intent} targetAgent=${routedState.targetAgent} currentStep=${routedState.currentStep} selectedModel=${routedState.selectedModel}`);
   if (IS_RUNTIME_DEBUG) {
     log.info(`Routed -> agent=${routedState.targetAgent}, intent=${routedState.intent}, mood=${routedState.mood}`);
   }
@@ -167,6 +229,9 @@ export async function processMessageStreaming(
 
       if (!routed.bypassedExecution) {
         const agentFn = AGENTS[state.targetAgent];
+      if (state.targetAgent === "plannerAgent") {
+        log.info("[PLANNER_AGENT_DISPATCH]", { requestId, intent: state.intent, targetAgent: state.targetAgent });
+      }
         state = agentFn ? await agentFn(state) : await taskAgentNode(state);
       }
     }
@@ -248,8 +313,32 @@ export async function processMessage(
       state = routed.state;
 
       if (!routed.bypassedExecution) {
-        const agentFn = AGENTS[state.targetAgent];
-        state = agentFn ? await agentFn(state) : await taskAgentNode(state);
+        // --- Begin redispatch loop ---
+        let currentAgent = state.targetAgent;
+    log.info('[REDISPATCH_LOOP]');
+        const maxRedispatch = 10; // safeguard against infinite loops
+        let redispatchCount = 0;
+        while (true) {
+          const executedAgent = currentAgent;
+          const agentFn = AGENTS[executedAgent] ?? taskAgentNode;
+          log.info('[AGENT_DISPATCH]', { agent: executedAgent });
+          console.log(`[INTENT_BEFORE_SUPERVISOR] requestId=${requestId} intent=${state.intent} targetAgent=${state.targetAgent} currentStep=${state.currentStep} selectedModel=${state.selectedModel}`);
+          state = await agentFn(state);
+          console.log(`[INTENT_AFTER_SUPERVISOR] requestId=${requestId} intent=${state.intent} targetAgent=${state.targetAgent} currentStep=${state.currentStep} selectedModel=${state.selectedModel}`);
+          // If no further target change or same agent, stop
+          if (!state.targetAgent || state.targetAgent === executedAgent) {
+            break;
+          }
+          // Prevent runaway loops
+          if (++redispatchCount > maxRedispatch) {
+            log.warn('[REDISPATCH_LIMIT]', { from: executedAgent, to: state.targetAgent });
+            break;
+          }
+          const nextAgent = state.targetAgent;
+          log.info('[REDISPATCH]', { from: executedAgent, to: nextAgent });
+          currentAgent = nextAgent;
+        }
+        // --- End redispatch loop ---
       }
     }
 

@@ -18,6 +18,7 @@ function trimHistoryContent(content: string): string {
 }
 
 export async function taskAgentNode(state: GraphState): Promise<GraphState> {
+  log.info('[TASK_AGENT_START]', { state: state.currentInput });
   log.info(`TaskAgent handling intent: ${state.intent}`);
 
   const isConversational = state.intent === "chitchat" || state.intent === "conversation";
@@ -81,5 +82,8 @@ export async function taskAgentNode(state: GraphState): Promise<GraphState> {
     });
   }
 
+  // After handling the task, hand off to executionAgent
+  state.targetAgent = "executionAgent";
+  log.info('[TASK_AGENT_RETURN]');
   return { ...state, response, currentStep: "done" };
 }

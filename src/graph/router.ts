@@ -98,12 +98,26 @@ export async function routerNode(state: GraphState): Promise<GraphState> {
 
   console.time('routeRequest');
   const routeResult = await routeRequest(state.currentInput);
+  log.info("[ROUTER_NODE_START]", { input: state.currentInput });
   console.timeEnd('routeRequest');
 
   const rawRoutedIntent = routeResult.ok ? routeResult.value.intent.intent : IntentEnum.CONVERSATION;
+  log.info("[RAW_ROUTED_INTENT]", { rawRoutedIntent });
   const routedIntent = normalizeIntent(rawRoutedIntent);
-  const contextIntent = rawRoutedIntent === "emotion_support" ? rawRoutedIntent : routedIntent;
-  const contextBudgetTier = getContextBudgetTier(state.currentInput, contextIntent);
+  let contextIntent: string = rawRoutedIntent === "emotion_support" ? rawRoutedIntent : routedIntent;
+  // Routing overrides for research tasks
+  if (routedIntent === IntentEnum.RESEARCH_TASK || routedIntent === IntentEnum.BROWSER_RESEARCH_TASK) {
+    log.info("[RESEARCH_TASK_ROUTE]", { intent: routedIntent });
+    contextIntent = routedIntent; // keep as is
+  }
+
+  let contextBudgetTier = getContextBudgetTier(state.currentInput, contextIntent);
+  // High context budget for research intents
+  if (contextIntent === IntentEnum.RESEARCH_TASK || contextIntent === IntentEnum.BROWSER_RESEARCH_TASK) {
+    contextBudgetTier = 3; // high tier
+    log.info("[CONTEXT_TIER_OVERRIDDEN]", { contextIntent, contextBudgetTier });
+  }
+
   let mood = state.mood;
   let energy = state.energy;
   let emotionConfidence = state.emotionConfidence;
@@ -167,11 +181,17 @@ export async function routerNode(state: GraphState): Promise<GraphState> {
 
   if (routeResult.ok) {
     const route = routeResult.value;
+    // Override targetAgent for research intents
+    let targetAgent = route.agent;
+    if (routedIntent === IntentEnum.RESEARCH_TASK || routedIntent === IntentEnum.BROWSER_RESEARCH_TASK) {
+      targetAgent = "plannerAgent";
+      log.info("[PLANNER_ROUTE]");
+    }
     return {
       ...state,
       intent: contextIntent,
       intentConfidence: route.intent.confidence,
-      targetAgent: route.agent,
+      targetAgent,
       selectedModel: route.model,
       mood,
       energy,

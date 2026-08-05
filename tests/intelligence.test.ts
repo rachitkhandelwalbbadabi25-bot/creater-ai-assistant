@@ -177,12 +177,12 @@ describe('Phase 6: Autonomous Intelligence & Self‑Improvement Layer', () => {
 
   // 18. Skill Recommender Command Suggester
   test('should recommend specific skills and slash commands based on usage patterns', () => {
-    recordExperience({ success: true, toolName: 'subagent', details: {} });
-    recordExperience({ success: true, toolName: 'subagent', details: {} });
-    recordExperience({ success: true, toolName: 'subagent', details: {} });
+    recordExperience({ success: true, toolName: 'agent-manager-skill', details: {} });
+    recordExperience({ success: true, toolName: 'agent-manager-skill', details: {} });
+    recordExperience({ success: true, toolName: 'agent-manager-skill', details: {} });
 
     const recs = recommendSkills();
-    expect(recs.some(r => r.skillName === 'agent-manager-skill')).toBe(true);
+    expect(recs.some(r => r === 'agent-manager-skill')).toBe(true);
   });
 
   // 19. Intelligence Telemetry Metrics Integration

@@ -1,0 +1,2 @@
+{"timestamp":"2026-07-03T12:35:41.413Z","action":"step1","status":"success","module":"wf"}
+{"timestamp":"2026-07-03T12:35:41.416Z","action":"step2","status":"failed","module":"wf","error":{"name":"Error","message":"boom","stack":"Error: boom\n    at <anonymous> (C:\\Users\\dell\\OneDrive\\Desktop\\personal ai assistant\\src\\tests\\executionLog.test.ts:32:18)"}}

@@ -9,6 +9,8 @@ export enum IntentEnum {
   UNKNOWN = "unknown",
   // WEB_SEARCH removed – use BROWSER_SEARCH instead
   FILE_MANAGEMENT = "file_management",
+  RESEARCH_TASK = "research_task",
+  BROWSER_RESEARCH_TASK = "browser_research_task",
 }
 
 export enum ExecutionModeEnum {
@@ -23,7 +25,9 @@ export type SemanticIntent =
   | "system_action"
   | "information_search"
   | "conversation"
-  | "unknown";
+  | "unknown"
+  | "research_task"
+  | "browser_research_task";
 
 export interface SemanticResult {
   intent: IntentEnum | SemanticIntent;
@@ -35,4 +39,9 @@ export interface SemanticResult {
   requiresValidation?: boolean;
   // New optional field to carry extracted entities (e.g., person name, location)
   entities?: Record<string, string>;
+  // Research task metadata flags
+  requiresPlanning?: boolean;
+  requiresSummary?: boolean;
+  requiresBrowser?: boolean;
+  multiStep?: boolean;
 }

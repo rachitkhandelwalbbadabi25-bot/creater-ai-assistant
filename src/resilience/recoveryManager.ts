@@ -50,7 +50,7 @@ class RecoveryManager {
         return false;
       }
     } catch (error) {
-      log.error(`Recovery action for '${name}' failed:`, error);
+      log.error(`Recovery action for '${name}' failed:`, { error: String(error) });
       resilienceMetricsTracker.recordRecoveryFailure();
       return false;
     }
@@ -62,7 +62,7 @@ class RecoveryManager {
       try {
         await this.attemptRecovery(name);
       } catch (err) {
-        log.error(`Scheduled recovery for '${name}' threw error:`, err);
+        log.error(`Scheduled recovery for '${name}' threw error:`, { error: String(err) });
       }
     }, delayMs);
   }
@@ -85,18 +85,52 @@ export const recoveryManager = new RecoveryManager();
 
 // Register Default Recovery Actions
 recoveryManager.registerRecovery("browser", async () => {
-  log.info("Restarting browser process and recycling context...");
-  // Simulate or execute browser close/open
-  return true;
+  log.info("Executing real browser process recycling and context cleanup...");
+  try {
+    const { browserSessionManager } = await import("../mcp/browser/sessionManager.js");
+    await browserSessionManager.cleanupAll();
+    log.info("Browser session recycling completed successfully.");
+    return true;
+  } catch (err) {
+    log.error("Failed to recycle browser sessions in recovery action:", { error: String(err) });
+    return false;
+  }
 });
 
 recoveryManager.registerRecovery("ollama", async () => {
-  log.info("Attempting to reconnect / ping Ollama server...");
-  // Try ping/health check
-  return true;
+  log.info("Attempting to reconnect and verify Ollama server health...");
+  try {
+    const { checkOllamaHealth } = await import("../llm/ollama.js");
+    const health = await checkOllamaHealth();
+    if (health.ok) {
+      log.info(`Ollama health check verified: ${health.value.length} models available.`);
+      return true;
+    } else {
+      log.warn("Ollama health check failed during recovery:", { error: String(health.error) });
+      return false;
+    }
+  } catch (err) {
+    log.error("Ollama recovery check threw error:", { error: String(err) });
+    return false;
+  }
 });
 
 recoveryManager.registerRecovery("cleanup", async () => {
-  log.info("Cleaning up dead sessions and temporary resources...");
-  return true;
+  log.info("Cleaning up dead browser sessions, open breakers, and temporary resources...");
+  try {
+    const { browserSessionManager } = await import("../mcp/browser/sessionManager.js");
+    await browserSessionManager.cleanupAll();
+    for (const [name, breaker] of Object.entries(breakerRegistry)) {
+      if (breaker.getState() === "OPEN") {
+        log.info(`Resetting open breaker '${name}' in cleanup recovery action`);
+        breaker.reset();
+      }
+    }
+    log.info("Resource cleanup completed successfully.");
+    return true;
+  } catch (err) {
+    log.error("Resource cleanup recovery action failed:", { error: String(err) });
+    return false;
+  }
 });
+

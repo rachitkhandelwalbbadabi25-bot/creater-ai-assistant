@@ -97,6 +97,59 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
       pattern: { type: "string", description: "Glob pattern filter", required: false },
     },
   },
+  {
+    id: "fs.create_directory",
+    name: "Create Directory",
+    description: "Create a directory folder recursively.",
+    category: "filesystem",
+    permission: "moderate",
+    parameters: {
+      path: { type: "string", description: "Directory path to create", required: true },
+    },
+  },
+  {
+    id: "fs.move_file",
+    name: "Move File",
+    description: "Move or rename a file or directory.",
+    category: "filesystem",
+    permission: "sensitive",
+    parameters: {
+      src: { type: "string", description: "Source file/folder path", required: true },
+      dest: { type: "string", description: "Destination file/folder path", required: true },
+    },
+  },
+  {
+    id: "fs.copy_file",
+    name: "Copy File",
+    description: "Copy a file or directory to a destination.",
+    category: "filesystem",
+    permission: "moderate",
+    parameters: {
+      src: { type: "string", description: "Source file/folder path", required: true },
+      dest: { type: "string", description: "Destination file/folder path", required: true },
+    },
+  },
+  {
+    id: "fs.search_files",
+    name: "Search Files",
+    description: "Recursively search for files matching a query.",
+    category: "filesystem",
+    permission: "safe",
+    parameters: {
+      query: { type: "string", description: "File name query string", required: true },
+      base_dir: { type: "string", description: "Base directory to search in", required: false, default: "." },
+    },
+  },
+  {
+    id: "fs.file_metadata",
+    name: "File Metadata",
+    description: "Inspect metadata statistics for a file or folder.",
+    category: "filesystem",
+    permission: "safe",
+    parameters: {
+      path: { type: "string", description: "File or directory path", required: true },
+    },
+  },
 
   // ── Shell Tools ──────────────────────────────────────────────────────────────
   {
@@ -182,6 +235,47 @@ export const TOOL_REGISTRY: ToolDefinition[] = [
         description: 'Which metrics to fetch: ["cpu", "ram", "battery", "disk", "network", "processes"]',
         required: false,
       },
+    },
+  },
+  {
+    id: "system.process_list",
+    name: "Process List",
+    description: "List active system processes ordered by CPU/RAM usage.",
+    category: "system",
+    permission: "safe",
+    parameters: {
+      top_n: { type: "number", description: "Number of top processes to return", required: false, default: 10 },
+    },
+  },
+  {
+    id: "system.process_kill",
+    name: "Kill Process",
+    description: "Terminate a system process by PID. Requires explicit confirmation.",
+    category: "system",
+    permission: "dangerous",
+    parameters: {
+      pid: { type: "number", description: "Process ID to terminate", required: true },
+    },
+  },
+  {
+    id: "system.clipboard",
+    name: "Clipboard Access",
+    description: "Read or write content to the system clipboard.",
+    category: "system",
+    permission: "moderate",
+    parameters: {
+      action: { type: "string", description: "Action type: 'read' or 'write'", required: true, enum: ["read", "write"] },
+      text: { type: "string", description: "Text content for write action", required: false },
+    },
+  },
+  {
+    id: "system.env",
+    name: "Get Environment Variables",
+    description: "Inspect allowed safe environment variables.",
+    category: "system",
+    permission: "safe",
+    parameters: {
+      keys: { type: "array", description: "Optional list of variable names to retrieve", required: false },
     },
   },
   {

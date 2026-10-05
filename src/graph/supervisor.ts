@@ -379,8 +379,32 @@ export async function processConfirmation(
     return "👍 Theek hai, cancel kar diya. Kuch aur chahiye?";
   }
 
-  if (IS_RUNTIME_DEBUG) {
-    log.info(`User confirmed tool: ${pendingToolId}`, { pendingParams });
+  log.info(`User confirmed tool execution: ${pendingToolId}`, { pendingParams });
+  const taskId = `confirm_${Date.now()}`;
+  const correlationId = crypto.randomUUID();
+
+  try {
+    const { initWorkflow, setWorkflowStatus, appendStepResult } = await import("../orchestrator/status.js");
+    const { dispatchTool } = await import("../tools/dispatcher.js");
+
+    initWorkflow(taskId, correlationId);
+    setWorkflowStatus(taskId, "running");
+
+    const result = await dispatchTool(pendingToolId, pendingParams);
+    appendStepResult(taskId, { stepId: pendingToolId, status: "completed", output: result });
+    setWorkflowStatus(taskId, "completed");
+
+    let resultString = typeof result === "string" ? result : JSON.stringify(result);
+    if (resultString.length > 500) resultString = resultString.slice(0, 500) + "...";
+    return `✅ Executed ${pendingToolId} successfully!\nOutput: ${resultString}`;
+  } catch (error) {
+    log.error(`Confirmed tool execution failed: ${pendingToolId}`, error);
+    try {
+      const { setWorkflowStatus, appendStepResult } = await import("../orchestrator/status.js");
+      appendStepResult(taskId, { stepId: pendingToolId, status: "failed", error: String(error) });
+      setWorkflowStatus(taskId, "failed");
+    } catch {}
+    return formatErrorForUser(error);
   }
-  return `✅ Running ${pendingToolId}... (tool execution coming soon)`;
 }
+

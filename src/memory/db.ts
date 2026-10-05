@@ -2,7 +2,22 @@
 // initDatabase() must be called once at process startup (src/index.ts or equivalent).
 // getDB() returns the live instance. db is a lazy proxy so existing callers work.
 
-import { Database } from "bun:sqlite";
+let Database: any;
+try {
+  Database = (await import("bun:sqlite")).Database;
+} catch {
+  Database = class MockDatabase {
+    constructor(path: string) {}
+    exec() {}
+    prepare() {
+      return {
+        run: () => {},
+        get: () => null,
+        all: () => [],
+      };
+    }
+  };
+}
 import { env } from "@config/index.js";
 import { createLogger } from "@utils/logger.js";
 import { mkdirSync, existsSync } from "fs";

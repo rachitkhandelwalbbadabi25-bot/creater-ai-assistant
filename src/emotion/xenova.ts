@@ -108,9 +108,9 @@ async function getClassifier(): Promise<any> {
     const loadPromise = (async () => {
       const { pipeline, env: tfEnv } = await import("@xenova/transformers");
       // Point to the correct HuggingFace Hub CDN and allow local cache first
-      tfEnv.remoteHost = "https://huggingface.co/";
-      tfEnv.remotePathTemplate = "{model}/resolve/{revision}/";
-      tfEnv.allowLocalModels = true;
+      (tfEnv as any).remoteHost = "https://huggingface.co/";
+      (tfEnv as any).remotePathTemplate = "{model}/resolve/{revision}/";
+      (tfEnv as any).allowLocalModels = true;
       return await pipeline(
         "text-classification",
         "SamLowe/roberta-base-go_emotions-onnx",

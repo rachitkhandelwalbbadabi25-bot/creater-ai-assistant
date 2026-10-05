@@ -4,6 +4,7 @@ import { getAgentMetrics, resetAgentMetrics } from "./agentMetrics.js";
 import { getOllamaMetrics, resetOllamaMetrics } from "./ollamaMetrics.js";
 import { getToolMetrics, resetToolMetrics, getApiMetrics, resetApiMetrics } from "../tools/toolMetrics.js";
 import { getResilienceMetrics, resetResilienceMetrics } from "../resilience/resilienceMetrics.js";
+import { recordMetric, incrementCounter, startTimer, getMetrics as getObservabilityMetrics, clearMetrics as clearObservabilityMetrics } from "../observability/metrics.js";
 
 class MetricsRegistry {
   private static instance: MetricsRegistry | null = null;
@@ -41,6 +42,10 @@ class MetricsRegistry {
     return getResilienceMetrics();
   }
 
+  getObservabilityMetrics() {
+    return getObservabilityMetrics();
+  }
+
   getAllMetrics() {
     return {
       system: this.getSystemMetrics(),
@@ -49,6 +54,7 @@ class MetricsRegistry {
       tools: this.getToolMetrics(),
       api: this.getApiMetrics(),
       resilience: this.getResilienceMetrics(),
+      observability: this.getObservabilityMetrics(),
     };
   }
 
@@ -59,6 +65,7 @@ class MetricsRegistry {
     resetToolMetrics();
     resetApiMetrics();
     resetResilienceMetrics();
+    clearObservabilityMetrics();
   }
 }
 
@@ -72,4 +79,12 @@ export function resetMetrics(): void {
   metricsRegistry.resetMetrics();
 }
 
-export { MetricsRegistry };
+export {
+  MetricsRegistry,
+  recordMetric,
+  incrementCounter,
+  startTimer,
+  getObservabilityMetrics,
+  clearObservabilityMetrics,
+};
+

@@ -28,7 +28,8 @@
       "@bot/*": ["src/bot/*"],
       "@utils/*": ["src/utils/*"],
       "@conversation/*": ["src/conversation/*"],
-      "onnxruntime-web": ["node_modules/onnxruntime-node"]
+      "onnxruntime-web": ["node_modules/onnxruntime-node"],
+      "bun:test": ["tests/bunTestPolyfill.ts"]
     },
     "types": ["bun-types"]
   },

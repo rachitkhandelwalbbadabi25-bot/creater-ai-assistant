@@ -1,12 +1,13 @@
 // ════════════════════════════════════════════════════════════════════════════════
-// src/tools/laptop/browser.ts — Browser automation via Playwright (Phase 5.2)
+// src/tools/laptop/browser.ts — Browser automation via Playwright
+// Delegated to authoritative browserSessionManager in src/mcp/browser/sessionManager.ts
 // Wrapped with executeTool() for retries, timeouts, metrics, and recovery.
 // ════════════════════════════════════════════════════════════════════════════════
 
-import { env } from "@config/index.js";
 import { createLogger } from "@utils/logger.js";
 import { ToolError } from "@utils/errorHandler.js";
 import { executeTool } from "../../agents/toolExecutor.js";
+import { browserSessionManager } from "../../mcp/browser/sessionManager.js";
 import {
   recordBrowserRetry,
   recordBrowserFailure,
@@ -15,95 +16,6 @@ import {
 } from "../toolMetrics.js";
 
 const log = createLogger("tools/browser");
-
-let browserInstance: any = null;
-let launchInProgress: Promise<any> | null = null;
-let idleTimer: NodeJS.Timeout | null = null;
-const IDLE_TIMEOUT_MS: number =
-  Number(process.env.PLAYWRIGHT_IDLE_TIMEOUT_MS) || 5 * 60 * 1000;
-
-// ─── Browser Lifecycle ────────────────────────────────────────────────────────
-
-async function launchBrowser(): Promise<any> {
-  const { chromium, firefox, webkit } = await import("playwright");
-  const browsers = { chromium, firefox, webkit };
-  const browserType =
-    browsers[env.PLAYWRIGHT_BROWSER as keyof typeof browsers] ?? chromium;
-  const instance = await browserType.launch({ headless: env.PLAYWRIGHT_HEADLESS });
-  browserInstance = instance;
-  log.info(`Browser launched: ${env.PLAYWRIGHT_BROWSER} (headless=${env.PLAYWRIGHT_HEADLESS})`);
-  log.info("PLAYWRIGHT SINGLETON VERIFIED");
-  resetIdleTimer();
-  return instance;
-}
-
-async function getBrowser(): Promise<any> {
-  // Reuse an existing, still-connected browser
-  if (browserInstance && browserInstance.isConnected?.()) {
-    log.info("EXISTING BROWSER REUSED");
-    return browserInstance;
-  }
-
-  // If a launch is already in progress, wait for it
-  if (launchInProgress) {
-    log.info("DUPLICATE BROWSER LAUNCH PREVENTED");
-    await launchInProgress;
-    return browserInstance;
-  }
-
-  // Wrap launch in executeTool for retry + timeout
-  console.log("[TOOL_EXECUTION_START] browser.launch");
-  const start = Date.now();
-
-  launchInProgress = (async () => {
-    const res = await executeTool(() => launchBrowser(), {
-      maxAttempts: 3,
-      baseDelayMs: 500,
-      timeoutMs: 30000,
-    });
-
-    if (!res.success) {
-      console.log("[TOOL_EXECUTION_FAILED] browser.launch", res.error);
-      if (res.error?.includes("timeout")) recordTimeout();
-      recordBrowserFailure();
-      launchInProgress = null;
-      throw new ToolError("browser.launch", res.error ?? "Failed to launch browser");
-    }
-
-    console.log("[TOOL_EXECUTION_SUCCESS] browser.launch");
-    recordBrowserSuccess(Date.now() - start);
-  })();
-
-  await launchInProgress;
-  launchInProgress = null;
-  return browserInstance;
-}
-
-export async function closeBrowser(): Promise<void> {
-  if (browserInstance) {
-    try {
-      await browserInstance.close();
-    } catch {
-      // ignore – already closed
-    }
-    browserInstance = null;
-    if (idleTimer) {
-      clearTimeout(idleTimer);
-      idleTimer = null;
-    }
-    log.info("Browser closed");
-  }
-}
-
-function resetIdleTimer(): void {
-  if (idleTimer) clearTimeout(idleTimer);
-  idleTimer = setTimeout(async () => {
-    log.info("PLAYWRIGHT AUTO CLOSE TRIGGERED");
-    await closeBrowser();
-    log.info("PLAYWRIGHT CLEANUP COMPLETE");
-  }, IDLE_TIMEOUT_MS);
-  log.info("PLAYWRIGHT IDLE TIMER STARTED");
-}
 
 // ─── Browser Recovery Helpers ─────────────────────────────────────────────────
 
@@ -124,16 +36,7 @@ async function withPage<T>(
         console.log(`[BROWSER_RETRY_START] ${operationName} attempt ${lastAttempt}`);
         recordBrowserRetry();
       }
-      const browser = await getBrowser();
-      resetIdleTimer();
-      const page = await browser.newPage();
-      try {
-        const result = await fn(page);
-        return result;
-      } finally {
-        // Always close the page after use
-        await page.close().catch(() => {});
-      }
+      return await browserSessionManager.executeOnPage(fn);
     },
     retryPolicy
   );
@@ -145,14 +48,19 @@ async function withPage<T>(
     return res.result as T;
   }
 
-  // Recovery: close stale browser so next call recreates it
+  // Recovery: cleanup sessions so next call recreates cleanly
   console.log(`[TOOL_EXECUTION_FAILED] ${operationName}`, res.error);
   if (lastAttempt > 1) console.log(`[BROWSER_RETRY_FAILED] ${operationName}`);
   if (res.error?.includes("timeout")) recordTimeout();
   recordBrowserFailure();
-  await closeBrowser();
+  await browserSessionManager.cleanupAll().catch(() => {});
 
   throw new ToolError(operationName, res.error ?? `${operationName} failed`);
+}
+
+export async function closeBrowser(): Promise<void> {
+  await browserSessionManager.cleanupAll();
+  log.info("Browser session cleaned up");
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -209,3 +117,4 @@ process.on("exit", async () => {
   log.info("Process exit event, ensuring browser is closed");
   await closeBrowser();
 });
+

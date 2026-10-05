@@ -100,6 +100,63 @@ export async function listDirectory(relPath: string): Promise<DirectoryEntry[]> 
   }
 }
 
+/** Copy a file/folder inside the sandbox */
+export async function copyFile(srcRel: string, destRel: string): Promise<void> {
+  const src = resolveSandboxPath(srcRel);
+  const dest = resolveSandboxPath(destRel);
+  const destDir = path.dirname(dest);
+  try {
+    await fs.promises.mkdir(destDir, { recursive: true });
+    await fs.promises.copyFile(src, dest);
+  } catch (err) {
+    throw new FileMCPError(`Failed to copy ${srcRel} -> ${destRel}`, 'COPY_ERROR', err);
+  }
+}
+
+/** Delete a file or directory inside the sandbox */
+export async function removePath(relPath: string): Promise<void> {
+  const fullPath = resolveSandboxPath(relPath);
+  try {
+    if (fs.existsSync(fullPath)) {
+      const stats = await fs.promises.stat(fullPath);
+      if (stats.isDirectory()) {
+        await fs.promises.rm(fullPath, { recursive: true, force: true });
+      } else {
+        await fs.promises.unlink(fullPath);
+      }
+    }
+  } catch (err) {
+    throw new FileMCPError(`Failed to delete path: ${relPath}`, 'DELETE_ERROR', err);
+  }
+}
+
+/** Get metadata statistics for a path */
+export async function getMetadata(relPath: string): Promise<{
+  name: string;
+  path: string;
+  size: number;
+  isFile: boolean;
+  isDirectory: boolean;
+  createdMs: number;
+  modifiedMs: number;
+}> {
+  const fullPath = resolveSandboxPath(relPath);
+  try {
+    const stats = await fs.promises.stat(fullPath);
+    return {
+      name: path.basename(fullPath),
+      path: fullPath,
+      size: stats.size,
+      isFile: stats.isFile(),
+      isDirectory: stats.isDirectory(),
+      createdMs: stats.birthtimeMs,
+      modifiedMs: stats.mtimeMs,
+    };
+  } catch (err) {
+    throw new FileMCPError(`Failed to get metadata for path: ${relPath}`, 'METADATA_ERROR', err);
+  }
+}
+
 /** Recursively search for files whose names contain the query substring */
 export async function searchFiles(query: string, options: { baseDir?: string } = {}): Promise<DirectoryEntry[]> {
   const baseRel = options.baseDir ?? '.';

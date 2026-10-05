@@ -4,7 +4,7 @@
 // NOTE: Shell commands are NEVER retried (maxAttempts=1) for destructive safety.
 // ════════════════════════════════════════════════════════════════════════════════
 
-import { $ } from "bun";
+import { exec as childExec } from "child_process";
 import { env } from "@config/index.js";
 import { validateCommand } from "../safety.js";
 import { SafetyError, ToolError } from "@utils/errorHandler.js";
@@ -84,17 +84,16 @@ export async function executeCommand(
 
   const res = await executeTool(
     async () => {
-      const result =
-        process.platform === "win32"
-          ? await $`cmd /c ${command}`.cwd(cwd).quiet().nothrow()
-          : await $`sh -c ${command}`.cwd(cwd).quiet().nothrow();
-
-      return {
-        stdout: result.stdout.toString().trim(),
-        stderr: result.stderr.toString().trim(),
-        exitCode: result.exitCode,
-        duration: Date.now() - start,
-      } as ExecResult;
+      return new Promise<ExecResult>((resolve) => {
+        childExec(command, { cwd, timeout }, (error, stdout, stderr) => {
+          resolve({
+            stdout: (stdout || "").toString().trim(),
+            stderr: (stderr || "").toString().trim(),
+            exitCode: error ? (error.code ?? 1) : 0,
+            duration: Date.now() - start,
+          });
+        });
+      });
     },
     { maxAttempts, timeoutMs: timeout }
   );

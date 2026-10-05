@@ -2,9 +2,9 @@
 // src/tools/laptop/fileSystem.ts — Safe file system operations
 // ════════════════════════════════════════════════════════════════════════════════
 
-import { readFile, writeFile, unlink, readdir, stat, mkdir } from "fs/promises";
+import { readFile, writeFile, unlink, readdir, stat, mkdir, rename, copyFile as copyFileFs, rm } from "fs/promises";
 import { existsSync } from "fs";
-import { join, resolve, extname } from "path";
+import { join, resolve, extname, dirname, basename } from "path";
 import { validateFileOp } from "../safety.js";
 import { SafetyError, ToolError } from "@utils/errorHandler.js";
 import { createLogger } from "@utils/logger.js";
@@ -52,7 +52,60 @@ export async function deleteFile(path: string): Promise<void> {
   }
 
   log.tool(`Deleting: ${fullPath}`);
-  await unlink(fullPath);
+  if (existsSync(fullPath)) {
+    const stats = await stat(fullPath);
+    if (stats.isDirectory()) {
+      await rm(fullPath, { recursive: true, force: true });
+    } else {
+      await unlink(fullPath);
+    }
+  }
+}
+
+export async function createDirectory(dirPath: string): Promise<void> {
+  const fullPath = resolve(dirPath);
+  const safety = validateFileOp("write", fullPath);
+  if (!safety.allowed) throw new SafetyError(`Directory creation blocked: ${safety.reason}`);
+
+  log.tool(`Creating directory: ${fullPath}`);
+  await mkdir(fullPath, { recursive: true });
+}
+
+export async function moveFile(srcPath: string, destPath: string): Promise<void> {
+  const srcFull = resolve(srcPath);
+  const destFull = resolve(destPath);
+
+  const srcSafety = validateFileOp("read", srcFull);
+  const destSafety = validateFileOp("write", destFull);
+  if (!srcSafety.allowed || !destSafety.allowed) {
+    throw new SafetyError(`Move operation blocked: ${srcSafety.reason || destSafety.reason}`);
+  }
+  if (destSafety.requiresConfirmation) {
+    throw new SafetyError(`Move requires confirmation: ${destFull}`);
+  }
+
+  const destDir = dirname(destFull);
+  if (!existsSync(destDir)) await mkdir(destDir, { recursive: true });
+
+  log.tool(`Moving: ${srcFull} -> ${destFull}`);
+  await rename(srcFull, destFull);
+}
+
+export async function copyFile(srcPath: string, destPath: string): Promise<void> {
+  const srcFull = resolve(srcPath);
+  const destFull = resolve(destPath);
+
+  const srcSafety = validateFileOp("read", srcFull);
+  const destSafety = validateFileOp("write", destFull);
+  if (!srcSafety.allowed || !destSafety.allowed) {
+    throw new SafetyError(`Copy operation blocked: ${srcSafety.reason || destSafety.reason}`);
+  }
+
+  const destDir = dirname(destFull);
+  if (!existsSync(destDir)) await mkdir(destDir, { recursive: true });
+
+  log.tool(`Copying: ${srcFull} -> ${destFull}`);
+  await copyFileFs(srcFull, destFull);
 }
 
 export interface FileInfo {
@@ -85,4 +138,60 @@ export async function listDirectory(dirPath: string, pattern?: string): Promise<
 
   log.tool(`Listed ${results.length} entries in ${fullPath}`);
   return results;
+}
+
+export async function searchFiles(query: string, baseDir = "."): Promise<FileInfo[]> {
+  const fullBase = resolve(baseDir);
+  if (!existsSync(fullBase)) throw new ToolError("fs.search_files", `Base directory not found: ${fullBase}`);
+
+  const results: FileInfo[] = [];
+
+  async function walk(dir: string) {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(entryPath);
+      } else if (entry.name.includes(query)) {
+        const stats = await stat(entryPath).catch(() => null);
+        results.push({
+          name: entry.name,
+          path: entryPath,
+          isDirectory: false,
+          size: stats ? formatBytes(stats.size) : "unknown",
+          extension: extname(entry.name),
+        });
+      }
+    }
+  }
+
+  await walk(fullBase);
+  log.tool(`Found ${results.length} files matching query "${query}"`);
+  return results;
+}
+
+export async function getFileMetadata(path: string): Promise<{
+  name: string;
+  path: string;
+  size: string;
+  sizeBytes: number;
+  isFile: boolean;
+  isDirectory: boolean;
+  createdMs: number;
+  modifiedMs: number;
+}> {
+  const fullPath = resolve(path);
+  if (!existsSync(fullPath)) throw new ToolError("fs.file_metadata", `File/directory not found: ${fullPath}`);
+
+  const stats = await stat(fullPath);
+  return {
+    name: basename(fullPath),
+    path: fullPath,
+    size: formatBytes(stats.size),
+    sizeBytes: stats.size,
+    isFile: stats.isFile(),
+    isDirectory: stats.isDirectory(),
+    createdMs: stats.birthtimeMs,
+    modifiedMs: stats.mtimeMs,
+  };
 }

@@ -148,7 +148,7 @@ export async function withRetry<T>(
         log.warn(`Retry ${i + 1}/${attempts} failed, retrying in ${delay}ms...`, {
           error: lastError.message,
         });
-        await Bun.sleep(delay);
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
   }

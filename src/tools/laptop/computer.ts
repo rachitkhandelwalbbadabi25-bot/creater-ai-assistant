@@ -222,9 +222,69 @@ export async function waitForElement(selector: string, timeout: number = 5000): 
 
 // ─── YouTube Specific ─────────────────────────────────────────────────────────
 
-export async function playYouTube(query: string): Promise<string> {
+export async function playYouTube(
+  query: string,
+  action: "play" | "search" = "play",
+  selection: "first" = "first"
+): Promise<string> {
   const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
-  console.log("[LAUNCH TRACE]", "src/tools/laptop/computer.ts", "playYouTube", searchUrl);
-  return openBrowser(searchUrl);
+  console.log("[LAUNCH TRACE]", "src/tools/laptop/computer.ts", "playYouTube", { query, action, selection, searchUrl });
+
+  if (action === "search" || !query.trim()) {
+    await openUrl(searchUrl);
+    return `Searched YouTube for "${query}".`;
+  }
+
+  // Action is "play": Use Playwright to find the first actual video watch link
+  return withComputerAction("computer.playYouTube", async (page) => {
+    log.info(`[YOUTUBE_PLAY] Opening search results page for "${query}" (action: ${action}, selection: ${selection}): ${searchUrl}`);
+    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+
+    // Wait for video result links to load
+    const selector = 'a#video-title, a[href*="/watch?v="]';
+    try {
+      await page.waitForSelector(selector, { timeout: 10000 });
+    } catch {
+      log.warn("No video selector found on YouTube search page");
+    }
+
+    // Inspect search results and find the first watch link
+    const videoData = await page.evaluate(() => {
+      const links = Array.from(document.querySelectorAll('a[href*="/watch?v="]')) as HTMLAnchorElement[];
+      for (const link of links) {
+        const href = link.getAttribute("href");
+        const rawTitle = link.getAttribute("title") || link.innerText?.trim() || "";
+        const cleanTitle = rawTitle.split("\n")[0].trim();
+        if (href && href.includes("/watch?v=")) {
+          const fullUrl = href.startsWith("http") ? href : `https://www.youtube.com${href}`;
+          return { url: fullUrl, title: cleanTitle };
+        }
+      }
+      return null;
+    });
+
+    if (!videoData || !videoData.url) {
+      throw new Error(`Could not find a video result on YouTube for "${query}".`);
+    }
+
+    log.info(`[YOUTUBE_PLAY] Found video watch URL: ${videoData.url} (${videoData.title})`);
+
+    // Navigate Playwright session to the watch URL
+    await page.goto(videoData.url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    const currentUrl = page.url();
+
+    // Mandatory Validation: ensure navigation reached a YouTube watch page
+    const isValidWatchPage = currentUrl.includes("/watch?") || currentUrl.includes("/watch/") || currentUrl.includes("watch?v=");
+    if (!isValidWatchPage) {
+      throw new Error(`Navigation failed to reach YouTube video watch page (current URL: ${currentUrl}).`);
+    }
+
+    // Launch default system browser to the watch URL so the user can watch/listen
+    await openUrl(videoData.url);
+
+    const videoTitle = videoData.title && videoData.title.length > 0 ? videoData.title : `first ${query} video`;
+    return `Opened video "${videoTitle}" on YouTube.`;
+  });
 }
+
 

@@ -45,8 +45,8 @@ export function getModelOverride(): string | null {
 
 // ─── Intent → Agent Mapping ───────────────────────────────────────────────────────
 const INTENT_TO_AGENT: Record<string, string> = {
-  chitchat: "taskAgent",
-  [IntentEnum.CONVERSATION]: "taskAgent",
+  chitchat: "conversationAgent",
+  [IntentEnum.CONVERSATION]: "conversationAgent",
   task_management: "taskAgent",
   project_query: "projectAgent",
   code_request: "projectAgent",
@@ -57,7 +57,7 @@ const INTENT_TO_AGENT: Record<string, string> = {
   emotion_support: "emotionAgent",
   knowledge_qa: "taskAgent",
   scheduling: "taskAgent",
-  meta: "taskAgent",
+  meta: "conversationAgent",
   // New research intents
   [IntentEnum.RESEARCH_TASK]: "plannerAgent",
   [IntentEnum.BROWSER_RESEARCH_TASK]: "plannerAgent",

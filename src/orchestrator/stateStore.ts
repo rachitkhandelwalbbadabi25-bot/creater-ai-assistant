@@ -41,13 +41,94 @@ async function ensureDataDirs(): Promise<void> {
   await fs.mkdir(CHECKPOINTS_DIR, { recursive: true });
 }
 
+/**
+ * Deep clone helper that preserves state isolation while supporting
+ * compound data types, functions (callables), Dates, RegExps, Maps, Sets,
+ * and circular references without throwing DataCloneError.
+ */
+export function deepClone<T>(value: T, seen = new WeakMap<object, any>()): T {
+  // 1. Primitives & non-objects
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+
+  // 2. Circular reference protection
+  if (seen.has(value)) {
+    return seen.get(value);
+  }
+
+  // 3. Dates
+  if (value instanceof Date) {
+    const copy = new Date(value.getTime()) as unknown as T;
+    seen.set(value, copy);
+    return copy;
+  }
+
+  // 4. RegExps
+  if (value instanceof RegExp) {
+    const copy = new RegExp(value.source, value.flags) as unknown as T;
+    seen.set(value, copy);
+    return copy;
+  }
+
+  // 5. Maps
+  if (value instanceof Map) {
+    const copy = new Map() as unknown as T;
+    seen.set(value, copy);
+    for (const [k, v] of (value as Map<any, any>).entries()) {
+      (copy as Map<any, any>).set(deepClone(k, seen), deepClone(v, seen));
+    }
+    return copy;
+  }
+
+  // 6. Sets
+  if (value instanceof Set) {
+    const copy = new Set() as unknown as T;
+    seen.set(value, copy);
+    for (const item of (value as Set<any>).values()) {
+      (copy as Set<any>).add(deepClone(item, seen));
+    }
+    return copy;
+  }
+
+  // 7. Arrays
+  if (Array.isArray(value)) {
+    const copy: any[] = new Array(value.length);
+    seen.set(value, copy);
+    for (let i = 0; i < value.length; i++) {
+      copy[i] = deepClone(value[i], seen);
+    }
+    return copy as unknown as T;
+  }
+
+  // 8. Plain & custom objects
+  const proto = Object.getPrototypeOf(value);
+  const copy: Record<string | symbol, any> = proto ? Object.create(proto) : {};
+  seen.set(value, copy);
+
+  for (const key of Reflect.ownKeys(value)) {
+    try {
+      const desc = Object.getOwnPropertyDescriptor(value, key);
+      if (desc) {
+        if (typeof desc.get === 'function' || typeof desc.set === 'function') {
+          Object.defineProperty(copy, key, desc);
+        } else if (typeof desc.value !== 'undefined') {
+          copy[key] = deepClone(desc.value, seen);
+        } else {
+          Object.defineProperty(copy, key, desc);
+        }
+      }
+    } catch (err: any) {
+      console.error(`[stateStore/deepClone] Failed to clone property [${String(key)}]:`, err?.message || err);
+    }
+  }
+
+  return copy as unknown as T;
+}
+
 /** Deep clone a TaskState – safe for test isolation */
 function clone<T>(obj: T): T {
-  // structuredClone is available in recent Node versions; fallback to JSON round‑trip
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-  return typeof (globalThis as any).structuredClone === 'function'
-    ? (globalThis as any).structuredClone(obj)
-    : (JSON.parse(JSON.stringify(obj)) as T);
+  return deepClone(obj);
 }
 
 /** Create a new task with default empty arrays */
@@ -63,14 +144,30 @@ export function createTask(taskId: string, partial?: Partial<TaskState>): TaskSt
     metadata: partial?.metadata ?? {},
     createdAt: now,
     updatedAt: now,
-    ...(partial || {}),
   };
+  if (partial) {
+    try {
+      for (const key of Reflect.ownKeys(partial)) {
+        const desc = Object.getOwnPropertyDescriptor(partial, key);
+        if (desc) {
+          Object.defineProperty(base, key, desc);
+        }
+      }
+    } catch (err: any) {
+      console.error(`[stateStore] Failed to merge partial state for task [${taskId}]:`, err?.message || err);
+    }
+  }
   store.set(taskId, base);
   // Persist immediately if enabled
   if (isPersistenceEnabled()) {
     void persistState();
   }
-  return clone(base);
+  try {
+    return clone(base);
+  } catch (err: any) {
+    console.error(`[stateStore] Failed to clone task [${taskId}] on creation:`, err?.message || err);
+    return base;
+  }
 }
 
 /** Update an existing task – `updater` receives the current state and must return a new state */
@@ -89,12 +186,26 @@ export function updateTask(taskId: string, updater: (state: TaskState) => TaskSt
 /** Retrieve a deep clone of a task, or undefined if missing */
 export function getTask(taskId: string): TaskState | undefined {
   const found = store.get(taskId);
-  return found ? clone(found) : undefined;
+  if (!found) return undefined;
+  try {
+    return clone(found);
+  } catch (err: any) {
+    console.error(`[stateStore] Failed to clone task [${taskId}]:`, err?.message || err);
+    return undefined;
+  }
 }
 
 /** List all task states (deep cloned) */
 export function listTasks(): TaskState[] {
-  return Array.from(store.values()).map(clone);
+  const result: TaskState[] = [];
+  for (const [id, task] of store.entries()) {
+    try {
+      result.push(clone(task));
+    } catch (err: any) {
+      console.error(`[stateStore] Failed to clone task [${id}]:`, err?.message || err);
+    }
+  }
+  return result;
 }
 
 /** Delete a task from the store */

@@ -31,12 +31,16 @@ class BrowserSessionManager {
     return this.openTab();
   }
 
-  async navigate(tabId: string, url: string): Promise<void> {
+  async navigate(tabId: string, url: string, timeoutMs: number = 8000): Promise<void> {
     this.resetIdleTimer();
     const page = this.getPage(tabId);
     if (!page) throw new Error(`No active browser page for tab: ${tabId}`);
     console.log(`[PAGE_GOTO] ${url}`);
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    } catch (err: any) {
+      console.log(`[PAGE_GOTO_WARNING] domcontentloaded timed out or redirected: ${err.message}. Proceeding to DOM evaluation.`);
+    }
   }
 
   async search(tabId: string, query: string): Promise<void> {

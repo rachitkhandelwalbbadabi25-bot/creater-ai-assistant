@@ -133,6 +133,24 @@ async function callGemini(opts: UnifiedChatOptions): Promise<string> {
 }
 
 async function fallbackToLocal(opts: UnifiedChatOptions): Promise<string> {
+  const { isOllamaAvailable } = await import("./ollama.js");
+  const available = await isOllamaAvailable();
+  if (!available) {
+    if (ProviderAvailability.gemini) {
+      log.info("Falling back to Gemini in fallbackToLocal...");
+      return callGemini({ ...opts, model: "gemini-1.5-flash" });
+    }
+    if (ProviderAvailability.openai) {
+      log.info("Falling back to OpenAI in fallbackToLocal...");
+      return callOpenAICompatible({ ...opts, model: "gpt-4o-mini" }, "https://api.openai.com/v1", env.OPENAI_API_KEY, "OpenAI");
+    }
+    if (ProviderAvailability.anthropic) {
+      log.info("Falling back to Anthropic in fallbackToLocal...");
+      return callAnthropic({ ...opts, model: "claude-3-haiku-20240307" });
+    }
+    throw new Error(`Unable to connect to Ollama at ${env.OLLAMA_BASE_URL} (ConnectionRefused). Please make sure Ollama is running.`);
+  }
+
   log.warn(`Falling back to local model: ${env.OLLAMA_PRIMARY_MODEL}`);
   const { chat: ollamaChat } = await import("./ollama.js");
   return ollamaChat({ ...opts, model: env.OLLAMA_PRIMARY_MODEL });
@@ -140,6 +158,26 @@ async function fallbackToLocal(opts: UnifiedChatOptions): Promise<string> {
 
 export async function chat(opts: UnifiedChatOptions): Promise<string> {
   const provider = getProvider(opts.model);
+  if (provider === "ollama") {
+    const { isOllamaAvailable } = await import("./ollama.js");
+    const available = await isOllamaAvailable();
+    if (!available) {
+      log.warn(`Ollama service at ${env.OLLAMA_BASE_URL} is unreachable. Checking cloud fallback providers.`);
+      if (ProviderAvailability.gemini) {
+        log.info("Falling back to Gemini...");
+        return callGemini({ ...opts, model: "gemini-1.5-flash" });
+      }
+      if (ProviderAvailability.openai) {
+        log.info("Falling back to OpenAI...");
+        return callOpenAICompatible({ ...opts, model: "gpt-4o-mini" }, "https://api.openai.com/v1", env.OPENAI_API_KEY, "OpenAI");
+      }
+      if (ProviderAvailability.anthropic) {
+        log.info("Falling back to Anthropic...");
+        return callAnthropic({ ...opts, model: "claude-3-haiku-20240307" });
+      }
+      throw new Error(`Unable to connect to Ollama at ${env.OLLAMA_BASE_URL} (ConnectionRefused). Please make sure Ollama is running.`);
+    }
+  }
   if (IS_RUNTIME_DEBUG) {
     log.info(`Chat -> provider: ${provider}, model: ${opts.model}`);
     log.info("Prompt received", {
@@ -213,6 +251,32 @@ export async function chatStream(
   }
 
   if (provider === "ollama") {
+    const { isOllamaAvailable } = await import("./ollama.js");
+    const available = await isOllamaAvailable();
+    if (!available) {
+      log.warn(`Ollama service at ${env.OLLAMA_BASE_URL} is unreachable. Checking cloud fallback providers.`);
+      // Check cloud providers before failing
+      if (ProviderAvailability.gemini) {
+        log.info("Falling back to Gemini...");
+        const res = await callGemini({ ...opts, model: "gemini-1.5-flash" });
+        onToken(res);
+        return res;
+      }
+      if (ProviderAvailability.openai) {
+        log.info("Falling back to OpenAI...");
+        const res = await callOpenAICompatible({ ...opts, model: "gpt-4o-mini" }, "https://api.openai.com/v1", env.OPENAI_API_KEY, "OpenAI");
+        onToken(res);
+        return res;
+      }
+      if (ProviderAvailability.anthropic) {
+        log.info("Falling back to Anthropic...");
+        const res = await callAnthropic({ ...opts, model: "claude-3-haiku-20240307" });
+        onToken(res);
+        return res;
+      }
+      throw new Error(`Unable to connect to Ollama at ${env.OLLAMA_BASE_URL} (ConnectionRefused). Please make sure Ollama is running.`);
+    }
+
     try {
       const ollamaModule = await import("./ollama.js");
       const ollamaChatStream = ollamaModule.chatStream as any;
@@ -223,15 +287,41 @@ export async function chatStream(
       }
       return content.trim();
     } catch (err) {
-      log.error(`Local Ollama stream failed for model ${opts.model}: ${err}. Falling back to default model.`);
-      const fallbackModel = env.DEFAULT_MODEL || "qwen2.5:3b";
-      if (opts.model === fallbackModel) {
-        throw err;
+      log.error(`Local Ollama stream failed for model ${opts.model}: ${err}. Checking fallback providers.`);
+      
+      // Attempt available cloud fallback providers before throwing
+      if (ProviderAvailability.gemini) {
+        try {
+          log.info("Falling back from Ollama to Gemini stream...");
+          const res = await callGemini({ ...opts, model: "gemini-1.5-flash" });
+          onToken(res);
+          return res;
+        } catch (gErr) {
+          log.warn("Gemini fallback failed", { error: String(gErr) });
+        }
       }
-      const { chatStream: ollamaChatStream } = await import("./ollama.js");
-      const response: any = await ollamaChatStream({ ...opts, model: fallbackModel } as never, onToken);
-      const content = typeof response === "string" ? response : (response?.message?.content ?? "");
-      return content.trim();
+      if (ProviderAvailability.openai) {
+        try {
+          log.info("Falling back from Ollama to OpenAI stream...");
+          const res = await callOpenAICompatible({ ...opts, model: "gpt-4o-mini" }, "https://api.openai.com/v1", env.OPENAI_API_KEY, "OpenAI");
+          onToken(res);
+          return res;
+        } catch (oErr) {
+          log.warn("OpenAI fallback failed", { error: String(oErr) });
+        }
+      }
+      if (ProviderAvailability.anthropic) {
+        try {
+          log.info("Falling back from Ollama to Anthropic stream...");
+          const res = await callAnthropic({ ...opts, model: "claude-3-haiku-20240307" });
+          onToken(res);
+          return res;
+        } catch (aErr) {
+          log.warn("Anthropic fallback failed", { error: String(aErr) });
+        }
+      }
+
+      throw err;
     }
   }
 

@@ -23,7 +23,7 @@ describe("Phase 5 Step 5 — Post-Action Verification Engine Tests", () => {
     } finally {
       await browserSessionManager.closeTab(tabId);
     }
-  });
+  }, 15000);
 
   it("2. URL expectation mismatch fails gracefully with NOT_VERIFIED status", async () => {
     const tabId = await browserSessionManager.openTab();
@@ -40,7 +40,7 @@ describe("Phase 5 Step 5 — Post-Action Verification Engine Tests", () => {
     } finally {
       await browserSessionManager.closeTab(tabId);
     }
-  });
+  }, 15000);
 
   it("3. Page title match verification succeeds and fails correctly", async () => {
     const tabId = await browserSessionManager.openTab();

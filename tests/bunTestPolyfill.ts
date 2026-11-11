@@ -1,28 +1,42 @@
-// Polyfill for bun:test so tests can be run via node/tsx
+// Polyfill for bun:test so tests can be run via bun test or node/tsx
 import assert from "node:assert";
+let bunTest: any;
+try {
+  bunTest = await import("bun:test");
+} catch {}
 
 let testQueue: Array<() => Promise<void>> = [];
 let isRunning = false;
+let currentBeforeEach: (() => void | Promise<void>) | null = null;
 
 async function processQueue() {
   if (isRunning) return;
   isRunning = true;
+  await new Promise((r) => setTimeout(r, 50));
+  let hasErrors = false;
   while (testQueue.length > 0) {
-    const fn = testQueue.shift()!;
+    const item = testQueue.shift()!;
     try {
       if (currentBeforeEach) await currentBeforeEach();
     } catch {}
-    await fn();
+    try {
+      await item();
+    } catch (e) {
+      hasErrors = true;
+    }
   }
   isRunning = false;
+  setTimeout(() => {
+    process.exit(hasErrors ? 1 : 0);
+  }, 100);
 }
 
-export function describe(name: string, fn: () => void | Promise<void>) {
+export const describe = bunTest?.describe || function(name: string, fn: () => void | Promise<void>) {
   console.log(`\n--- [SUITE] ${name} ---`);
   fn();
-}
+};
 
-export function test(name: string, fn: () => void | Promise<void>) {
+export const test = bunTest?.test || function(name: string, fn: () => void | Promise<void>) {
   testQueue.push(async () => {
     try {
       await fn();
@@ -33,25 +47,23 @@ export function test(name: string, fn: () => void | Promise<void>) {
     }
   });
   processQueue();
-}
+};
 
-export const it = test;
+export const it = bunTest?.it || test;
 
-let currentBeforeEach: (() => void | Promise<void>) | null = null;
-
-export function beforeEach(fn: () => void | Promise<void>) {
+export const beforeEach = bunTest?.beforeEach || function(fn: () => void | Promise<void>) {
   currentBeforeEach = fn;
-}
+};
 
-export function afterEach(fn: () => void | Promise<void>) {}
-export function beforeAll(fn: () => void | Promise<void>) {}
-export function afterAll(fn: () => void | Promise<void>) {}
+export const afterEach = bunTest?.afterEach || function(fn: () => void | Promise<void>) {};
+export const beforeAll = bunTest?.beforeAll || function(fn: () => void | Promise<void>) {};
+export const afterAll = bunTest?.afterAll || function(fn: () => void | Promise<void>) {};
 
-export function mock<T extends (...args: any[]) => any>(fn: T): T {
+export const mock = bunTest?.mock || function<T extends (...args: any[]) => any>(fn: T): T {
   return fn;
-}
+};
 
-export function expect(actual: any) {
+export function polyfillExpect(actual: any) {
   const matcher = {
     toBe(expected: any) {
       assert.strictEqual(actual, expected);
@@ -92,6 +104,9 @@ export function expect(actual: any) {
     },
     toBeGreaterThan(expected: number) {
       assert.ok(actual > expected, `Expected ${actual} > ${expected}`);
+    },
+    toBeLessThan(expected: number) {
+      assert.ok(actual < expected, `Expected ${actual} < ${expected}`);
     },
     toBeGreaterThanOrEqual(expected: number) {
       assert.ok(actual >= expected, `Expected ${actual} >= ${expected}`);
@@ -151,4 +166,6 @@ export function expect(actual: any) {
 
   return matcher;
 }
+
+export const expect = bunTest?.expect || polyfillExpect;
 

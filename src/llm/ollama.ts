@@ -391,6 +391,24 @@ async function withOllamaLock<T>(
 
 
 
+let cachedOllamaHealth: { available: boolean; timestamp: number } | null = null;
+
+export async function isOllamaAvailable(): Promise<boolean> {
+  const now = Date.now();
+  if (cachedOllamaHealth && now - cachedOllamaHealth.timestamp < 10000) {
+    return cachedOllamaHealth.available;
+  }
+  try {
+    const res = await fetch(`${env.OLLAMA_BASE_URL}/api/version`, { signal: AbortSignal.timeout(1500) });
+    const ok = res.ok;
+    cachedOllamaHealth = { available: ok, timestamp: now };
+    return ok;
+  } catch {
+    cachedOllamaHealth = { available: false, timestamp: now };
+    return false;
+  }
+}
+
 async function listOllamaModels(): Promise<string[]> {
   const response = await withTimeout(client.list(), 5000, "Ollama health check");
   return (response as any).models.map((m: any) => m.name);

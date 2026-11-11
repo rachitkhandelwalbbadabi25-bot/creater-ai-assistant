@@ -1,4 +1,17 @@
 import { z } from "zod";
+import path from "path";
+import { fileURLToPath } from "url";
+
+function getProjectRoot(): string {
+  try {
+    const currentDir = path.dirname(fileURLToPath(import.meta.url));
+    return path.resolve(currentDir, "../..");
+  } catch {
+    return process.cwd();
+  }
+}
+
+export const PROJECT_ROOT = getProjectRoot();
 
 // Helper to coerce boolean env vars
 const envBoolean = z.preprocess((v) => {
@@ -48,8 +61,12 @@ const EnvSchema = z.object({
   ]).default("local"),
 
   // Memory & DB
-  SQLITE_DB_PATH: z.string().default("./data/creater.db"),
-  VECTOR_DB_PATH: z.string().default("./data/vectors"),
+  SQLITE_DB_PATH: z.string().default("./data/creater.db").transform((val) => {
+    return path.isAbsolute(val) ? val : path.resolve(PROJECT_ROOT, val);
+  }),
+  VECTOR_DB_PATH: z.string().default("./data/vectors").transform((val) => {
+    return path.isAbsolute(val) ? val : path.resolve(PROJECT_ROOT, val);
+  }),
   SHORT_TERM_TTL_HOURS: z.coerce.number().default(4),
   MID_TERM_TTL_DAYS: z.coerce.number().default(30),
 

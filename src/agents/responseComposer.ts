@@ -49,6 +49,12 @@ export async function responseComposer(
     const execution = (context as any).executionAgentOutput;
     const verifier = (context as any).verifierAgentOutput;
 
+    const stepsExecutedCount = execution?.stepsExecuted?.length ?? 0;
+    const executionFailed = execution?.status === "failed" || stepsExecutedCount === 0;
+    const guardConstraint = executionFailed
+      ? "CRITICAL CONSTRAINT: Execution failed or no tool executed. Do NOT claim that any real-world action, file operation, launch, or system command succeeded."
+      : "Confirm success only for verified executed actions.";
+
     // Build compact prompt
     const compactPrompt = `User goal: ${planner?.goal ?? ""}\n\n` +
       `${summarizePlanner(planner)}\n` +
@@ -56,6 +62,7 @@ export async function responseComposer(
       `${summarizeReasoning(reasoning)}\n` +
       `${summarizeExecution(execution)}\n` +
       `${summarizeVerifier(verifier)}\n\n` +
+      `${guardConstraint}\n` +
       `Provide a complete, user‑facing answer that fulfills the request. Do not include any of the above debug data in the answer.`;
 
     const composerPromptChars = compactPrompt.length;

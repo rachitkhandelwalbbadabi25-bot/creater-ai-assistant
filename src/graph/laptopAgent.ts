@@ -19,11 +19,12 @@ import { IntentEnum } from "../runtime/semantic/semanticTypes.js";
 import { extractQuery } from "../runtime/semantic/queryExtractor.js";
 import { RuntimeCommand } from "../runtime/runtimeCommand.js";
 import { verifyStreamClean } from "../validation/streamDiagnostics.js";
+import { isScreenshotActionCommand } from "./commandRouter.js";
 
 const log = createLogger("graph/laptopAgent");
 const REGEX = {
   openAndSearch: /^open\s+(.+?)\s+and\s+search\s+(.+)$/i,
-  searchOnProvider: /^search\s+(.+?)\s+on\s+(google|youtube)$/i,
+  searchOnProvider: /^search\s+(?:for\s+)?(.+?)\s+on\s+(google|youtube)$/i,
   globalBrowser: /\b(?:on|in|using)\s+(chrome|edge|firefox)\b/i,
   directOpenBrowser: /^open\s+(.+?)\s+(?:on|in|using)\s+(chrome|edge|firefox)$/i,
   youtubeSearch: /^search\s+(.+)\s+on\s+youtube$/i,
@@ -130,7 +131,7 @@ async function executeDeterministicSearch(state: GraphState): Promise<string | n
   } else {
     feedback = `Searching ${providerName} for "${route.query}"...`;
   }
-  
+
   // Stream feedback immediately
   state.onToken?.(feedback);
 
@@ -309,7 +310,7 @@ async function tryDirectLaunch(state: GraphState): Promise<string | null> {
     if (IS_RUNTIME_DEBUG) {
       log.info("DIRECT MAPPING MATCHED", { target, mappedUrl: finalUrl });
     }
-    
+
     const siteName = getSiteDisplayName(target);
     const feedback = `Opening ${siteName}...`;
     state.onToken?.(feedback);
@@ -410,9 +411,406 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
         return { ...state, response, currentStep: "done" };
       }
 
+      // Fast Command Check (Direct URLs, Reminders, YouTube, Apps)
+      const { routeFastCommand } = await import("./commandRouter.js");
+      const fastCommand = routeFastCommand(state.currentInput);
+      if (fastCommand) {
+        const { dispatchTool } = await import("../tools/dispatcher.js");
+        log.info("LaptopAgent executing fast command", { fastCommand });
+
+        if (fastCommand.kind === "open_url") {
+          const feedback = `Opening ${fastCommand.url}...`;
+          state.onToken?.(feedback);
+          await openUrl(fastCommand.url);
+          addMessage("assistant", feedback, state.channel);
+          return { ...state, response: feedback, currentStep: "done" };
+        }
+
+        if (fastCommand.kind === "reminder") {
+          let toolId = "reminder.create";
+          let params: Record<string, unknown> = {
+            title: fastCommand.title,
+            timeInput: fastCommand.timeInput,
+            channel: state.channel,
+          };
+          if (fastCommand.action === "list") {
+            toolId = "reminder.list";
+            params = { channel: state.channel };
+          } else if (fastCommand.action === "query") {
+            toolId = "reminder.query";
+            params = { queryType: fastCommand.queryType || "latest", channel: state.channel };
+          } else if (fastCommand.action === "cancel") {
+            toolId = "reminder.cancel";
+            params = { query: fastCommand.query || "", channel: state.channel };
+          }
+
+          const res = (await dispatchTool(toolId, params)) as { success?: boolean; message?: string; error?: string };
+          const responseMsg = res.message || (res.success ? "Action completed." : `Failed: ${res.error}`);
+          state.onToken?.(responseMsg);
+          addMessage("assistant", responseMsg, state.channel);
+          return { ...state, response: responseMsg, currentStep: "done" };
+        }
+
+        if (fastCommand.kind === "youtube") {
+          const query = fastCommand.query;
+          const action = fastCommand.action || "play";
+
+          if (!query) {
+            const feedback = "Opening YouTube...";
+            state.onToken?.(feedback);
+            await openUrl("https://www.youtube.com");
+            addMessage("assistant", feedback, state.channel);
+            return { ...state, response: feedback, currentStep: "done" };
+          }
+
+          try {
+            const result = (await dispatchTool("computer.play_youtube", { query, action, selection: fastCommand.selection || "first" })) as string | { message?: string };
+            const responseMsg = typeof result === "string" ? result : result.message || `Completed YouTube ${action} for "${query}".`;
+            state.onToken?.(responseMsg);
+            addMessage("assistant", responseMsg, state.channel);
+            return { ...state, response: responseMsg, currentStep: "done" };
+          } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : `Failed to ${action} video on YouTube.`;
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+
+        if (fastCommand.kind === "open_path" || fastCommand.kind === "open_downloads") {
+          let folderName = "folder";
+          const targetPath = fastCommand.path;
+          const lowerPath = targetPath.toLowerCase();
+          if (lowerPath.includes("screenshots")) folderName = "Screenshots folder";
+          else if (lowerPath.includes("documents")) folderName = "Documents folder";
+          else if (lowerPath.includes("desktop")) folderName = "Desktop folder";
+          else if (lowerPath.includes("pictures")) folderName = "Pictures folder";
+          else if (lowerPath.includes("music")) folderName = "Music folder";
+          else if (lowerPath.includes("videos") || lowerPath.includes("movies")) folderName = "Videos folder";
+          else if (lowerPath.includes("downloads")) folderName = "Downloads folder";
+          else folderName = targetPath;
+
+          const feedback = `Opening ${folderName}...`;
+          state.onToken?.(feedback);
+          try {
+            await openFileOrPath(targetPath);
+            addMessage("assistant", feedback, state.channel);
+            return { ...state, response: feedback, currentStep: "done" };
+          } catch (err) {
+            const errorMsg = formatErrorForUser(err);
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+
+        if (fastCommand.kind === "open_app") {
+          const appDisplayNames: Record<string, string> = {
+            chrome: "Google Chrome",
+            edge: "Microsoft Edge",
+            firefox: "Firefox",
+            notepad: "Notepad",
+            calculator: "Calculator",
+            calc: "Calculator",
+            paint: "Paint",
+            mspaint: "Paint",
+            vscode: "VS Code",
+            explorer: "File Explorer",
+          };
+          const appName = appDisplayNames[fastCommand.app.toLowerCase()] || (fastCommand.app.charAt(0).toUpperCase() + fastCommand.app.slice(1));
+          const feedback = `Opening ${appName}...`;
+          state.onToken?.(feedback);
+          try {
+            await openApp(fastCommand.app);
+            addMessage("assistant", feedback, state.channel);
+            return { ...state, response: feedback, currentStep: "done" };
+          } catch (err) {
+            const errorMsg = formatErrorForUser(err);
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+
+        if (fastCommand.kind === "browser_home") {
+          const feedback = "Opening Web Browser...";
+          state.onToken?.(feedback);
+          try {
+            await openUrl("https://www.google.com");
+            addMessage("assistant", feedback, state.channel);
+            return { ...state, response: feedback, currentStep: "done" };
+          } catch (err) {
+            const errorMsg = formatErrorForUser(err);
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+
+        if (fastCommand.kind === "close_app") {
+          try {
+            const res = (await dispatchTool("system.close_app", { app: fastCommand.app })) as { message?: string } | string;
+            const responseMsg = typeof res === "string" ? res : res.message || `Closed ${fastCommand.app}.`;
+            state.onToken?.(responseMsg);
+            addMessage("assistant", responseMsg, state.channel);
+            return { ...state, response: responseMsg, currentStep: "done" };
+          } catch (err) {
+            const errorMsg = formatErrorForUser(err);
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+
+        if (fastCommand.kind === "volume") {
+          try {
+            const res = (await dispatchTool("system.volume", {
+              direction: fastCommand.direction,
+              value: fastCommand.value,
+            })) as { message?: string } | string;
+            const responseMsg = typeof res === "string" ? res : res.message || `Volume adjusted (${fastCommand.direction}).`;
+            state.onToken?.(responseMsg);
+            addMessage("assistant", responseMsg, state.channel);
+            return { ...state, response: responseMsg, currentStep: "done" };
+          } catch (err) {
+            const errorMsg = formatErrorForUser(err);
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+
+        if (fastCommand.kind === "screenshot") {
+          try {
+            const res = (await dispatchTool("system.screenshot", {})) as { message?: string; filePath?: string };
+            const responseMsg = res.message || `Screenshot captured successfully.`;
+            state.onToken?.(responseMsg);
+            addMessage("assistant", responseMsg, state.channel);
+            return { ...state, response: responseMsg, currentStep: "done" };
+          } catch (err) {
+            const errorMsg = formatErrorForUser(err);
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+
+        if (fastCommand.kind === "active_window") {
+          try {
+            const res = (await dispatchTool("cua.active_window", {})) as any;
+            const data = (res && res.data) ? res.data : (res || {});
+            const title = data.title || "";
+            const process = data.process || "";
+            const openApps: string[] = Array.isArray(data.openApps) ? data.openApps : [];
+            const bounds = data.bounds;
+
+            const lines: string[] = ["🖥️ **Screen Inspection:**"];
+            if (title) {
+              const boundsText = bounds && bounds.width > 0 ? ` (${bounds.width}x${bounds.height} at x=${bounds.x}, y=${bounds.y})` : "";
+              lines.push(`• **Active Window**: **${title}**${process ? ` (\`${process}\`)` : ""}${boundsText}`);
+            } else if (process) {
+              lines.push(`• **Active Window**: **${process}**`);
+            } else if (openApps.length > 0) {
+              lines.push(`• **Active Workspace**: Desktop (Interactive Session with ${openApps.length} open apps)`);
+            } else {
+              lines.push(`• **Active Workspace**: Desktop (Interactive Session)`);
+            }
+
+            if (openApps.length > 0) {
+              lines.push(`• **Detected Open Applications**: ${openApps.slice(0, 8).map((a: string) => `\`${a}\``).join(", ")}`);
+            }
+
+            // Also capture screenshot for visual verification
+            try {
+              const ssRes = (await dispatchTool("system.screenshot", {})) as any;
+              if (ssRes?.filePath) {
+                const pathMod = await import("path");
+                lines.push(`• **Visual Snapshot**: Captured \`${pathMod.basename(ssRes.filePath)}\``);
+              }
+            } catch { }
+
+            const responseMsg = lines.join("\n");
+            state.onToken?.(responseMsg);
+            addMessage("assistant", responseMsg, state.channel);
+            return { ...state, response: responseMsg, currentStep: "done" };
+          } catch (err) {
+            const errorMsg = formatErrorForUser(err);
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+
+        if (fastCommand.kind === "cua_click") {
+          try {
+            const res = (await dispatchTool("cua.click", { x: fastCommand.x, y: fastCommand.y })) as any;
+            const responseMsg = res?.success
+              ? `🖱️ Mouse clicked successfully at (${fastCommand.x}, ${fastCommand.y}).`
+              : `Failed to click: ${res?.error || "Unknown error"}`;
+            state.onToken?.(responseMsg);
+            addMessage("assistant", responseMsg, state.channel);
+            return { ...state, response: responseMsg, currentStep: "done" };
+          } catch (err) {
+            const errorMsg = formatErrorForUser(err);
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+
+        if (fastCommand.kind === "cua_type") {
+          try {
+            let focusMsg = "";
+            if (fastCommand.targetApp) {
+              const { focusDesktopWindow } = await import("../tools/laptop/desktopControl.js");
+              const focusRes = await focusDesktopWindow(fastCommand.targetApp);
+              if (focusRes.found) {
+                focusMsg = `Focused **${focusRes.title || fastCommand.targetApp}** and `;
+                await new Promise((r) => setTimeout(r, 250));
+              }
+            }
+            const res = (await dispatchTool("cua.type", { text: fastCommand.text })) as any;
+            const responseMsg = res?.success
+              ? `⌨️ ${focusMsg}Typed "${fastCommand.text}" into the active desktop window.`
+              : `Failed to type: ${res?.error || "Unknown error"}`;
+            state.onToken?.(responseMsg);
+            addMessage("assistant", responseMsg, state.channel);
+            return { ...state, response: responseMsg, currentStep: "done" };
+          } catch (err) {
+            const errorMsg = formatErrorForUser(err);
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+
+        if (fastCommand.kind === "mcp_list") {
+          try {
+            const res = (await dispatchTool("mcp.list_servers", {})) as any;
+            const data = (res && res.data) ? res.data : (res || {});
+            const servers = data?.servers?.map((s: any) => `• **${s.name}** (v${s.version}) - ${s.toolCount} tools: \`[${s.tools.join(', ')}]\``).join('\n') || "No registered servers";
+            const responseMsg = `📦 **Registered MCP Servers (${data?.count || data?.servers?.length || 0})**:\n\n${servers}`;
+            state.onToken?.(responseMsg);
+            addMessage("assistant", responseMsg, state.channel);
+            return { ...state, response: responseMsg, currentStep: "done" };
+          } catch (err) {
+            const errorMsg = formatErrorForUser(err);
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+
+        if (fastCommand.kind === "memory_store") {
+          try {
+            const { storeFact, getFact } = await import("../memory/longTerm.js");
+            storeFact(fastCommand.category, fastCommand.key, fastCommand.value, 1.0, "user_explicit");
+            const stored = getFact(fastCommand.category, fastCommand.key);
+            if (stored) {
+              const responseMsg = `I've saved that to my long-term memory: ${fastCommand.key} = "${fastCommand.value}".`;
+              state.onToken?.(responseMsg);
+              addMessage("assistant", responseMsg, state.channel);
+              return { ...state, response: responseMsg, currentStep: "done" };
+            }
+            throw new Error("Failed to verify SQLite fact persistence");
+          } catch (err) {
+            const errorMsg = "I couldn't save that to long-term memory.";
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+
+        if (fastCommand.kind === "memory_list") {
+          try {
+            const { buildUserProfile } = await import("../memory/longTerm.js");
+            const profile = buildUserProfile();
+            const responseMsg = `Here is what I remember about you:\n\n${profile}`;
+            state.onToken?.(responseMsg);
+            addMessage("assistant", responseMsg, state.channel);
+            return { ...state, response: responseMsg, currentStep: "done" };
+          } catch (err) {
+            const errorMsg = "I couldn't retrieve your memory profile.";
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+
+        if (fastCommand.kind === "memory_query") {
+          try {
+            const { getAllFacts, searchFacts } = await import("../memory/longTerm.js");
+            const rawTarget = fastCommand.query.toLowerCase().trim();
+            // 1. Direct search by query text
+            let matching = searchFacts(rawTarget);
+            // 2. Tokenized search across all facts
+            if (matching.length === 0) {
+              const all = getAllFacts();
+              const tokens = rawTarget
+                .split(/\s+/)
+                .filter((t) => t.length > 2 && !["what", "tell", "about", "your", "name", "meri", "mera", "favorite", "fav", "kya", "hai"].includes(t));
+
+              matching = all.filter((f) => {
+                const combined = `${f.key} ${f.value}`.toLowerCase();
+                return tokens.length > 0 && tokens.every((token) => combined.includes(token));
+              });
+
+              if (matching.length === 0 && tokens.length > 0) {
+                matching = all.filter((f) => {
+                  const combined = `${f.key} ${f.value}`.toLowerCase();
+                  return tokens.some((token) => combined.includes(token));
+                });
+              }
+            }
+
+            if (matching.length > 0) {
+              const fact = matching[0];
+              const responseMsg = `According to my memory: ${fact.value}.`;
+              state.onToken?.(responseMsg);
+              addMessage("assistant", responseMsg, state.channel);
+              return { ...state, response: responseMsg, currentStep: "done" };
+            } else {
+              const responseMsg = `I checked my memory, but I couldn't find any saved facts matching "${fastCommand.query}".`;
+              state.onToken?.(responseMsg);
+              addMessage("assistant", responseMsg, state.channel);
+              return { ...state, response: responseMsg, currentStep: "done" };
+            }
+          } catch (err) {
+            const errorMsg = "I couldn't retrieve that from memory.";
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+
+        if (fastCommand.kind === "social_message" || (fastCommand as any).kind === "browser_act") {
+          try {
+            const goal =
+              fastCommand.kind === "social_message"
+                ? `Send message to ${fastCommand.recipient} on ${fastCommand.platform}: ${fastCommand.message}`
+                : (fastCommand as any).goal || fastCommand.raw;
+
+            state.onToken?.(`🌐 Launching Universal Web Operator for goal: "${goal}"...\n`);
+            const res = (await dispatchTool("browser.autonomous_act", {
+              goal,
+            })) as any;
+
+            const responseMsg = res?.summary || res?.details || `Processed autonomous action for "${goal}".`;
+            state.onToken?.(responseMsg);
+            addMessage("assistant", responseMsg, state.channel);
+            return { ...state, response: responseMsg, currentStep: "done" };
+          } catch (err) {
+            const errorMsg = formatErrorForUser(err);
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+      }
+
       const executionResults: Array<{ tool: string; result: unknown }> = [];
       const directResponse = await tryDirectLaunch(state);
-      
+
       if (directResponse) {
         log.info("DIRECT LAUNCH EXECUTED");
         log.info("TOOL EXECUTION COMPLETE", { tool: "directLaunch", result: directResponse });
@@ -490,6 +888,8 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
         toolsToExecute.push({ id: "system.open_app", params: { app: "notepad" } });
       } else if (normalized.includes("open calculator") || normalized.includes("launch calculator") || normalized.includes("open calc")) {
         toolsToExecute.push({ id: "system.open_app", params: { app: "calculator" } });
+      } else if (isScreenshotActionCommand(state.currentInput)) {
+        toolsToExecute.push({ id: "system.screenshot", params: {} });
       }
 
       if (toolsToExecute.length > 0) {
@@ -497,7 +897,7 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
         let lastFeedback = "";
         for (const toolCall of toolsToExecute) {
           log.info("Executing tool", { id: toolCall.id, params: toolCall.params });
-          
+
           let feedback = "Executing action...";
           if (toolCall.id === "system.open_path") {
             feedback = "Opening Downloads folder...";
@@ -510,8 +910,10 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
             const app = (toolCall.params.app as string) || "";
             const appName = app.toLowerCase() === "chrome" ? "Google Chrome" : app.toLowerCase() === "notepad" ? "Notepad" : app.toLowerCase() === "calculator" ? "Calculator" : app.charAt(0).toUpperCase() + app.slice(1);
             feedback = `Opening ${appName}...`;
+          } else if (toolCall.id === "system.screenshot") {
+            feedback = "Screenshot captured successfully.";
           }
-          
+
           lastFeedback = feedback;
           state.onToken?.(feedback);
 
@@ -626,9 +1028,9 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
         }
       );
     }
-    
+
     log.info("Parsed tools:", { tools: parsed.tools });
-    
+
     if (parsed.tools?.length > 0) {
       for (const toolCall of parsed.tools) {
         log.info("Executing tool", { id: toolCall.id, params: toolCall.params });
@@ -639,7 +1041,7 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
 
         // Safety Check
         const needsConfirm = requiresConfirmation(toolDef, env.SAFETY_MODE as "strict" | "moderate" | "permissive");
-        
+
         if (needsConfirm) {
           return {
             ...state,
@@ -695,8 +1097,15 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
     return { ...state, response: userMessage, currentStep: "error" };
   }
 
-  addMessage("user", state.currentInput, state.channel, { intent: state.intent });
-  addMessage("assistant", response, state.channel);
+  const { enforceActionExecutionGuard } = await import("../validation/actionExecutionGuard.js");
+  const guardResult = enforceActionExecutionGuard(state.intent, executionResults, response);
 
-  return { ...state, response, currentStep: "done" };
+  addMessage("user", state.currentInput, state.channel, { intent: state.intent });
+  addMessage("assistant", guardResult.guardedResponse, state.channel);
+
+  return {
+    ...state,
+    response: guardResult.guardedResponse,
+    currentStep: guardResult.allowed ? "done" : "error",
+  };
 }

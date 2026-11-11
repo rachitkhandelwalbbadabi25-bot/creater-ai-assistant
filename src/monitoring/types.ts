@@ -100,3 +100,57 @@ export interface DashboardPayload {
   alerts: Alert[];
   uptimeMs: number;
 }
+
+// ─── Tracing & Telemetry Types (Phase 7) ──────────────────────────────────────────
+
+export type SpanType = "agent" | "tool" | "workflow" | "model" | "db" | "system";
+
+export interface TraceSpan {
+  id: string;
+  traceId: string;
+  parentSpanId?: string;
+  name: string;
+  type: SpanType;
+  startTime: number;
+  endTime?: number;
+  durationMs?: number;
+  status: "running" | "completed" | "failed";
+  tags?: Record<string, string | number | boolean>;
+  input?: unknown;
+  output?: unknown;
+  error?: string;
+}
+
+export interface Trace {
+  id: string;
+  rootName: string;
+  startTime: number;
+  endTime?: number;
+  durationMs?: number;
+  status: "running" | "completed" | "failed";
+  spans: TraceSpan[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface WorkflowStateSnapshot {
+  id: string;
+  workflowId: string;
+  stepId: string;
+  stepIndex: number;
+  timestamp: number;
+  status: string;
+  contextData: Record<string, unknown>;
+  stepResults: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SchedulerHealthMetrics {
+  activeJobs: number;
+  pausedJobs: number;
+  completedJobs: number;
+  failedJobs: number;
+  missedOccurrences: number;
+  lastTickTimestamp?: number;
+  loopRunning: boolean;
+}
+

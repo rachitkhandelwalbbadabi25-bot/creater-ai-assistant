@@ -330,3 +330,55 @@ export function convertAnchorCoordinateSpace(
     coordinateSpace: targetSpace,
   };
 }
+
+/** Convenience helper to create a point-based VisualAnchor */
+export function createPointAnchor(
+  x: number,
+  y: number,
+  coordinateSpace: CoordinateSpace = "SCREEN",
+  label?: string
+): VisualAnchor {
+  return createVisualAnchor({
+    id: `pt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    type: "region",
+    bounds: { x, y, width: 0.001, height: 0.001 },
+    coordinateSpace,
+    source: "point_target",
+    label: label || `point(${x},${y})`,
+    confidence: 1.0,
+  });
+}
+
+/** Convenience helper to create a bounding-box VisualAnchor */
+export function createBoxAnchor(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  coordinateSpace: CoordinateSpace = "SCREEN",
+  label?: string
+): VisualAnchor {
+  return createVisualAnchor({
+    id: `box_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    type: "button",
+    bounds: { x, y, width, height },
+    coordinateSpace,
+    source: "box_target",
+    label: label || `box(${x},${y},${width}x${height})`,
+    confidence: 1.0,
+  });
+}
+
+/** Resolves the target center coordinates of an anchor in the requested coordinate space */
+export function resolveAnchorCoordinates(
+  anchor: VisualAnchor,
+  targetSpace: CoordinateSpace = "SCREEN",
+  context: { windowOffset?: { x: number; y: number }; scroll?: { scrollX: number; scrollY: number } } = {}
+): Point {
+  if (anchor.coordinateSpace === targetSpace) {
+    return anchor.center;
+  }
+  const converted = convertAnchorCoordinateSpace(anchor, targetSpace, context);
+  return converted.center;
+}
+

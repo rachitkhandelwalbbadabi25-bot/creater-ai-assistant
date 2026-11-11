@@ -1,5 +1,5 @@
 import { IntentEnum } from "../runtime/semantic/semanticTypes.js";
-import { normalizeIntent } from "../runtime/semantic/intentDetector.js";
+import { normalizeIntent, containsFactualAttribute } from "../runtime/semantic/intentDetector.js";
 import { type GraphState } from "./state.js";
 import { Models } from "@config/models.js";
 import { routeRequest } from "@llm/router.js";
@@ -101,9 +101,27 @@ export async function routerNode(state: GraphState): Promise<GraphState> {
   log.info("[ROUTER_NODE_START]", { input: state.currentInput });
   console.timeEnd('routeRequest');
 
-  const rawRoutedIntent = routeResult.ok ? routeResult.value.intent.intent : IntentEnum.CONVERSATION;
+  let rawRoutedIntent = routeResult.ok ? routeResult.value.intent.intent : IntentEnum.CONVERSATION;
   log.info("[RAW_ROUTED_INTENT]", { rawRoutedIntent });
-  const routedIntent = normalizeIntent(rawRoutedIntent);
+  let routedIntent = normalizeIntent(rawRoutedIntent);
+
+  // ── Conversation Safety Gate ──
+  // If the initial input was non-execution (state.intent === CONVERSATION),
+  // ensure downstream routeRequest cannot force BROWSER_SEARCH without explicit search indicators.
+  if (state.intent === IntentEnum.CONVERSATION && routedIntent === IntentEnum.BROWSER_SEARCH) {
+    const lower = state.currentInput.toLowerCase();
+    const hasExplicitSearch = ["google", "search", "search for", "look up", "find information"].some((k) => lower.includes(k));
+    const hasFactualAttr = containsFactualAttribute(state.currentInput);
+    if (!hasExplicitSearch && !hasFactualAttr) {
+      log.warn("[SAFETY_GATE] Overriding unexpected browser_search to conversation for non-search query", { input: state.currentInput });
+      routedIntent = IntentEnum.CONVERSATION;
+      rawRoutedIntent = IntentEnum.CONVERSATION;
+      if (routeResult.ok) {
+        routeResult.value.agent = "taskAgent";
+      }
+    }
+  }
+
   let contextIntent: string = rawRoutedIntent === "emotion_support" ? rawRoutedIntent : routedIntent;
   // Routing overrides for research tasks
   if (routedIntent === IntentEnum.RESEARCH_TASK || routedIntent === IntentEnum.BROWSER_RESEARCH_TASK) {

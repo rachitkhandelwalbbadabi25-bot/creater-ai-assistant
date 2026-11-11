@@ -6,17 +6,21 @@ let Database: any;
 try {
   Database = (await import("bun:sqlite")).Database;
 } catch {
-  Database = class MockDatabase {
-    constructor(path: string) {}
-    exec() {}
-    prepare() {
-      return {
-        run: () => {},
-        get: () => null,
-        all: () => [],
-      };
-    }
-  };
+  try {
+    Database = (await import("better-sqlite3")).default;
+  } catch {
+    Database = class MockDatabase {
+      constructor(path: string) {}
+      exec() {}
+      prepare() {
+        return {
+          run: () => {},
+          get: () => null,
+          all: () => [],
+        };
+      }
+    };
+  }
 }
 import { env } from "@config/index.js";
 import { createLogger } from "@utils/logger.js";
@@ -37,6 +41,129 @@ declare global {
  * Must be called ONCE at process startup before any DB operation.
  * Safe to call multiple times — subsequent calls are no-ops.
  */
+class InMemDb {
+  private tables: Record<string, any[]> = {};
+  exec(_sql: string) {}
+  prepare(sql: string) {
+    const isUpsertFact = sql.includes("INSERT INTO facts");
+    const isGetFact = sql.includes("SELECT * FROM facts WHERE category = ? AND key = ?");
+    const isGetAllFacts = sql.includes("SELECT * FROM facts");
+    const isGetCategoryFacts = sql.includes("SELECT * FROM facts WHERE category = ?");
+    const isDeleteFact = sql.includes("DELETE FROM facts WHERE id = ?");
+
+    if (!this.tables["facts"]) this.tables["facts"] = [];
+    if (!this.tables["schedules"]) this.tables["schedules"] = [];
+    if (!this.tables["schedule_occurrences"]) this.tables["schedule_occurrences"] = [];
+
+    return {
+      run: (...args: any[]) => {
+        if (isUpsertFact) {
+          const [id, category, key, value, confidence, source] = args;
+          const idx = this.tables["facts"].findIndex(
+            (f) => f.category === category && f.key === key
+          );
+          const item = {
+            id,
+            category,
+            key,
+            value,
+            confidence,
+            source,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          if (idx >= 0) {
+            this.tables["facts"][idx] = item;
+          } else {
+            this.tables["facts"].push(item);
+          }
+          return { changes: 1 };
+        }
+        if (isDeleteFact) {
+          const [id] = args;
+          const lenBefore = this.tables["facts"].length;
+          this.tables["facts"] = this.tables["facts"].filter((f) => f.id !== id);
+          return { changes: lenBefore - this.tables["facts"].length };
+        }
+        if (sql.includes("INSERT OR REPLACE INTO schedules") || sql.includes("INSERT INTO schedules")) {
+          const [id, name, desc, wfId, wfTpl, sType, runAt, intMs, cronExp, tz, mPol, status, nRun, lRun, eCnt, fCnt, meta, cAt, uAt] = args;
+          const idx = this.tables["schedules"].findIndex((s) => s.id === id);
+          const item = { id, name, description: desc, workflow_id: wfId, workflow_template: wfTpl, schedule_type: sType, run_at: runAt, interval_ms: intMs, cron_expression: cronExp, timezone: tz, missed_policy: mPol, status, next_run_at: nRun, last_run_at: lRun, execution_count: eCnt, failure_count: fCnt, metadata: meta, created_at: cAt, updated_at: uAt };
+          if (idx >= 0) this.tables["schedules"][idx] = item;
+          else this.tables["schedules"].push(item);
+          return { changes: 1 };
+        }
+        if (sql.includes("DELETE FROM schedules WHERE id = ?")) {
+          const [id] = args;
+          this.tables["schedules"] = this.tables["schedules"].filter((s) => s.id !== id);
+          return { changes: 1 };
+        }
+        if (sql.includes("INSERT OR IGNORE INTO schedule_occurrences") || sql.includes("INSERT INTO schedule_occurrences")) {
+          const [id, schedule_id, occurrence_key, scheduled_time, executed_time, status, created_at] = args;
+          const exists = this.tables["schedule_occurrences"].some((o) => o.occurrence_key === occurrence_key);
+          if (exists) return { changes: 0 };
+          this.tables["schedule_occurrences"].push({ id, schedule_id, occurrence_key, scheduled_time, executed_time, status, created_at });
+          return { changes: 1 };
+        }
+        if (sql.includes("UPDATE schedule_occurrences SET status = ?")) {
+          const [status, executed_time, channel, title, body, err, key] = args;
+          const occ = this.tables["schedule_occurrences"].find((o) => o.occurrence_key === key);
+          if (occ) {
+            occ.status = status;
+            occ.executed_time = executed_time;
+            occ.delivered_channel = channel;
+            occ.notification_title = title;
+            occ.notification_body = body;
+            occ.error = err;
+            return { changes: 1 };
+          }
+          return { changes: 0 };
+        }
+        return { changes: 0 };
+      },
+      get: (...args: any[]) => {
+        if (isGetFact) {
+          const [category, key] = args;
+          return this.tables["facts"].find(
+            (f) => f.category === category && f.key === key
+          );
+        }
+        if (sql.includes("SELECT * FROM schedules WHERE id = ?")) {
+          const [id] = args;
+          return this.tables["schedules"].find((s) => s.id === id) || null;
+        }
+        if (sql.includes("SELECT * FROM schedule_occurrences WHERE occurrence_key = ?")) {
+          const [key] = args;
+          return this.tables["schedule_occurrences"].find((o) => o.occurrence_key === key) || null;
+        }
+        return null;
+      },
+      all: (...args: any[]) => {
+        if (isGetCategoryFacts) {
+          const [category] = args;
+          return this.tables["facts"].filter((f) => f.category === category);
+        }
+        if (isGetAllFacts) {
+          return [...this.tables["facts"]];
+        }
+        if (sql.includes("SELECT * FROM schedules WHERE status = 'ACTIVE'")) {
+          return this.tables["schedules"].filter((s) => s.status === 'ACTIVE');
+        }
+        if (sql.includes("status != 'ACTIVE'")) {
+          return this.tables["schedules"].filter((s) => s.status !== 'ACTIVE').map((s) => ({ id: s.id, status: s.status }));
+        }
+        if (sql.includes("SELECT * FROM schedules")) {
+          return [...this.tables["schedules"]];
+        }
+        if (sql.includes("SELECT occurrence_key FROM schedule_occurrences")) {
+          return this.tables["schedule_occurrences"].map((o) => ({ occurrence_key: o.occurrence_key }));
+        }
+        return [];
+      },
+    };
+  }
+}
+
 export function initDatabase(): void {
   if (globalThis.__dbInstance) return; // already initialised
 
@@ -47,16 +174,21 @@ export function initDatabase(): void {
     log.info(`Created data directory: ${dbDir}`);
   }
 
-  const instance = new Database(env.SQLITE_DB_PATH);
-  instance.exec("PRAGMA journal_mode = WAL");
-  instance.exec("PRAGMA busy_timeout = 5000");
-  instance.exec("PRAGMA foreign_keys = ON");
-  log.info("SQLite database initialized", { path: env.SQLITE_DB_PATH });
+  let instance: any;
+  try {
+    instance = new Database(env.SQLITE_DB_PATH);
+    instance.exec("PRAGMA journal_mode = WAL");
+    instance.exec("PRAGMA busy_timeout = 5000");
+    instance.exec("PRAGMA foreign_keys = ON");
+    log.info("SQLite database initialized", { path: env.SQLITE_DB_PATH });
 
-  // Migrations run exactly once per process
-  if (!globalThis.__dbMigrationsRun) {
-    runMigrations(instance);
-    globalThis.__dbMigrationsRun = true;
+    if (!globalThis.__dbMigrationsRun) {
+      runMigrations(instance);
+      globalThis.__dbMigrationsRun = true;
+    }
+  } catch (err) {
+    log.warn("Native SQLite database failed to initialize, falling back to InMemDb", { error: String(err) });
+    instance = new InMemDb();
   }
 
   globalThis.__dbInstance = instance;
@@ -307,6 +439,47 @@ function runMigrations(instance: InstanceType<typeof Database>): void {
       changed_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_versions_entity ON memory_versions(entity_type, entity_id);
+
+    -- Phase 6.3 / Reminders & Notifications: Persistent Schedules
+    CREATE TABLE IF NOT EXISTS schedules (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      workflow_id TEXT,
+      workflow_template TEXT,
+      schedule_type TEXT NOT NULL,
+      run_at INTEGER,
+      interval_ms INTEGER,
+      cron_expression TEXT,
+      timezone TEXT,
+      missed_policy TEXT DEFAULT 'RUN_ONCE_IF_MISSED',
+      status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE', 'PAUSED', 'COMPLETED', 'FAILED', 'CANCELLED')),
+      next_run_at INTEGER,
+      last_run_at INTEGER,
+      execution_count INTEGER DEFAULT 0,
+      failure_count INTEGER DEFAULT 0,
+      metadata TEXT DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_schedules_status_next ON schedules(status, next_run_at);
+
+    -- Phase 6.3 / Reminders & Notifications: Occurrence Claim & Delivery Records
+    CREATE TABLE IF NOT EXISTS schedule_occurrences (
+      id TEXT PRIMARY KEY,
+      schedule_id TEXT NOT NULL,
+      occurrence_key TEXT NOT NULL UNIQUE,
+      scheduled_time INTEGER NOT NULL,
+      executed_time INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('CLAIMED', 'SUCCESS', 'FAILED', 'SKIPPED')),
+      delivered_channel TEXT,
+      notification_title TEXT,
+      notification_body TEXT,
+      error TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_occurrences_schedule ON schedule_occurrences(schedule_id);
+    CREATE INDEX IF NOT EXISTS idx_occurrences_key ON schedule_occurrences(occurrence_key);
   `);
 
   // Safely add confidence column to memory_nodes and memory_edges if not already present

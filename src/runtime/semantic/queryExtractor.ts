@@ -4,7 +4,7 @@ export interface QueryExtractionResult {
 }
 
 const PLATFORM_SUFFIX_REGEX = /\s+(?:on\s+(?:google|youtube|bing|chrome)|from\s+(?:google|youtube)|online|offline)\s*$/i;
-const LEADING_HELPER_REGEX = /^(?:can you tell me|please tell me|tell me|what is|who is|search|find|lookup|look up|show me|give me)\s+/i;
+const LEADING_HELPER_REGEX = /^(?:can you tell me|please tell me|tell me|what is|who is|search for|search|find|lookup|look up|show me|give me)\s+/i;
 const TRAILING_HELPER_REGEX = /\s+(?:search it|google it|look it up|search)\s*$/i;
 const PLATFORM_ONLY_REGEX = /^(?:google|youtube|bing|chrome|online|offline)$/i;
 const HELPER_ONLY_REGEX = /^(?:tell me|what is|who is|search|find|lookup|look up|show me|give me|can you tell me|please tell me)$/i;

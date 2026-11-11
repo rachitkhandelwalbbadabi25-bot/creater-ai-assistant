@@ -7,39 +7,45 @@ import MemoryExplorer from "@/components/MemoryExplorer";
 import Analytics from "@/components/Analytics";
 import Settings from "@/components/Settings";
 
+const DEFAULT_MESSAGE = {
+  id: "welcome",
+  role: "assistant" as const,
+  content: "👋 Hey! Main Creater hoon — tumhara personal AI assistant. Kuch bhi poocho!",
+  timestamp: new Date().toISOString(),
+};
+
 export default function Home() {
   const [activeTab, setActiveTab] = useState("Chat");
-
-  const defaultMessage = {
-    id: "welcome",
-    role: "assistant" as const,
-    content: "👋 Hey! Main Creater hoon — tumhara personal AI assistant. Kuch bhi poocho!",
-    timestamp: new Date().toISOString(),
-  };
-
-  // Start with just welcome message (works on server too)
-  const [messages, setMessages] = useState<any[]>([defaultMessage]);
+  const [messages, setMessages] = useState<any[]>([DEFAULT_MESSAGE]);
   const [mounted, setMounted] = useState(false);
 
-  // Load from localStorage only after mount (client-side only)
+  // Synchronize from localStorage only after client-side mount to guarantee matching SSR HTML
   useEffect(() => {
     setMounted(true);
     try {
-      const saved = localStorage.getItem('creater_chat_history');
+      const saved = localStorage.getItem("creater_chat_history");
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed && parsed.length > 0) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           setMessages(parsed);
         }
       }
-    } catch { }
+    } catch (err) {
+      console.error("Failed to load initial chat history:", err);
+    }
   }, []);
 
-  // Save to localStorage on every message change
+  // Save to localStorage when messages change (debounced to avoid blocking during streaming)
   useEffect(() => {
-    if (mounted && messages.length > 1) {
-      localStorage.setItem('creater_chat_history', JSON.stringify(messages.slice(-50)));
-    }
+    if (!mounted || messages.length <= 1) return;
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem("creater_chat_history", JSON.stringify(messages.slice(-50)));
+      } catch (err) {
+        console.error("Failed to save chat history:", err);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
   }, [messages, mounted]);
 
   return (
@@ -57,3 +63,5 @@ export default function Home() {
     </main>
   );
 }
+
+

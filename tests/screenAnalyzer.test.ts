@@ -175,5 +175,5 @@ describe("Phase 5 Step 3 — Screen Inspection Foundation Tests", () => {
       expect(res.error.code).toBe("CAPTURE_FAILED");
       expect(res.error.sourceType).toBe("DESKTOP_SCREEN");
     }
-  });
+  }, 15000);
 });

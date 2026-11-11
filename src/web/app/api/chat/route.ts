@@ -1,4 +1,13 @@
+// Route updated for CUA native execution & autonomous social DOM operator
 import { processMessageStreaming } from "@graph/supervisor.js";
+import { initDatabase } from "@memory/db.js";
+import { startScheduler } from "@proactive/scheduler.js";
+
+// Ensure database and scheduler background loop are initialized in web runtime
+try {
+  initDatabase();
+  startScheduler();
+} catch {}
 
 export async function POST(req: Request) {
   try {

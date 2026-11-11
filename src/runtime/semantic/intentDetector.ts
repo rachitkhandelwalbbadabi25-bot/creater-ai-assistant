@@ -6,7 +6,7 @@ import { extractEntities } from "./entityExtractor.js";
 const SEARCH_INDICATORS = ["google", "search", "find", "find information", "look up"];
 const CONVERSATION_INDICATORS = ["hello", "hi", "hey", "good morning", "good night", "thanks", "please"];
 const APP_LAUNCH_INDICATORS = ["open", "launch", "start", "run"];
-const SYSTEM_INDICATORS = ["screenshot", "take screenshot", "record screen", "capture screen", "shutdown", "restart", "reboot", "sleep", "lock"];
+const SYSTEM_INDICATORS = ["screenshot", "take screenshot", "record screen", "capture screen", "shutdown", "restart", "reboot", "sleep", "lock", "screen", "active window", "inspect window", "mcp"];
 
 export const FACTUAL_ATTRIBUTES = [
   "age",
@@ -27,7 +27,7 @@ function includesAny(input: string, values: string[]): boolean {
 
 export function containsFactualAttribute(query: string): boolean {
   const normalized = query.toLowerCase();
-  return FACTUAL_ATTRIBUTES.some((attribute) => normalized.includes(attribute));
+  return FACTUAL_ATTRIBUTES.some((attribute) => new RegExp(`\\b${attribute}\\b`, "i").test(normalized));
 }
 
 export function normalizeIntent(intent: string): IntentEnum {
@@ -140,16 +140,11 @@ export function detectIntent(rawInput: string): SemanticResult {
     return buildResult(IntentEnum.CONVERSATION, 0.95, "conversation");
   }
 
-  if (hasValidQuery) {
-    return buildResult(IntentEnum.BROWSER_SEARCH, 0.85, "deterministic");
-  }
-
   return {
-  // Safe fallback: treat unclassified inputs as conversation
-  intent: IntentEnum.CONVERSATION,
-  confidence: 0.2,
-  executionMode: "validation",
-  source: "fallback",
-  requiresValidation: true,
-};
+    // Safe fallback: treat unclassified inputs as conversation
+    intent: IntentEnum.CONVERSATION,
+    confidence: 0.8,
+    executionMode: "conversation",
+    source: "fallback",
+  };
 }

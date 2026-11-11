@@ -1,6 +1,7 @@
 // src/monitoring/health.ts
 import { checkOllamaHealth } from "../llm/ollama.js";
 import { metricsRegistry } from "./metrics.js";
+import { evaluateSchedulerHealth } from "./schedulerMonitor.js";
 
 export enum HealthState {
   Healthy = "healthy",
@@ -66,6 +67,17 @@ export async function getHealthStatus(): Promise<HealthStatus> {
   if (memoryPercent > 0.90) {
     details.push(`Memory pressure: Heap usage is ${(memoryPercent * 100).toFixed(1)}%`);
     score -= 20;
+  }
+
+  // 6. Background scheduler & job health (Phase 7)
+  try {
+    const schedulerHealth = evaluateSchedulerHealth();
+    if (schedulerHealth.issues.length > 0) {
+      details.push(...schedulerHealth.issues);
+      score -= schedulerHealth.scoreDeduction;
+    }
+  } catch (err) {
+    // Non-blocking if scheduler state is uninitialized
   }
 
   // Cap score to min of 0

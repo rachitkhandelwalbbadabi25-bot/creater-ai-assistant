@@ -7,8 +7,17 @@ interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
-  timestamp: Date;
+  timestamp: Date | string;
 }
+
+const DEFAULT_FALLBACK_MESSAGE: Message = {
+  id: "welcome",
+  role: "assistant",
+  content: "👋 Hey! Main Creater hoon — tumhara personal AI assistant. Kuch bhi poocho!",
+  timestamp: new Date().toISOString(),
+};
+
+const generateUniqueId = () => `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
 export default function ChatInterface({
   appName = "Creater",
@@ -40,12 +49,15 @@ export default function ChatInterface({
     setShouldAutoScroll(isNearBottom);
   };
 
+  // Ensure message list is never empty/null/undefined during render transitions
+  const displayMessages = Array.isArray(messages) && messages.length > 0 ? messages : [DEFAULT_FALLBACK_MESSAGE];
+
   // Scroll to bottom when messages or loading state changes (if auto-scroll is allowed)
   useEffect(() => {
     if (scrollRef.current && shouldAutoScroll) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, isLoading, shouldAutoScroll]);
+  }, [displayMessages, isLoading, shouldAutoScroll]);
 
   // Helper for token streaming updates
   const handleStreaming = (assistantId: string) => (token: string) => {
@@ -61,14 +73,22 @@ export default function ChatInterface({
     isSubmittingRef.current = true;
     
     const userMsg: Message = {
-      id: Date.now().toString(),
+      id: generateUniqueId(),
       role: "user",
       content: input,
       timestamp: new Date(),
     };
     
-    // Instantly append user message and clear input
-    setMessages((prev) => [...prev, userMsg]);
+    const assistantId = generateUniqueId();
+    const assistantMsg: Message = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+      timestamp: new Date(),
+    };
+
+    // Batch message updates to avoid intermediate layout shifts
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInput("");
     setIsLoading(true);
     setShouldAutoScroll(true);
@@ -77,10 +97,6 @@ export default function ChatInterface({
     setStatusText("Thinking...");
     const t1 = setTimeout(() => setStatusText("Executing..."), 2500);
     const t2 = setTimeout(() => setStatusText("Still working..."), 7500);
-
-    // Placeholder assistant message
-    const assistantId = (Date.now() + 1).toString();
-    setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "", timestamp: new Date() }]);
 
     try {
       const response = await fetch("/api/chat", {
@@ -124,23 +140,10 @@ export default function ChatInterface({
 
   const handleClearHistory = () => {
     if (confirm("Are you sure you want to clear chat history?")) {
-      const defaultMessage: Message = {
-        id: "welcome",
-        role: "assistant",
-        content: "👋 Hey! Main Creater hoon — tumhara personal AI assistant. Kuch bhi poocho!",
-        timestamp: new Date(),
-      };
-      setMessages([defaultMessage]);
+      setMessages([DEFAULT_FALLBACK_MESSAGE]);
       localStorage.removeItem("creater_chat_history");
     }
   };
-
-  // Determine if loader spinner should be rendered at the bottom
-  const showLoader = isLoading && (
-    messages.length === 0 || 
-    messages[messages.length - 1].role !== "assistant" || 
-    messages[messages.length - 1].content === ""
-  );
 
   return (
     <div className="flex flex-col h-full bg-zinc-950">
@@ -170,13 +173,13 @@ export default function ChatInterface({
       <div 
         ref={scrollRef} 
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-8 space-y-8 scroll-smooth"
+        className="flex-1 overflow-y-auto p-8 space-y-8 min-h-0"
       >
-        {messages.map((msg) => (
+        {displayMessages.map((msg) => (
           <div
             key={msg.id}
             className={cn(
-              "flex gap-4 max-w-4xl mx-auto transition-all duration-300",
+              "flex gap-4 max-w-4xl mx-auto",
               msg.role === "user" ? "flex-row-reverse" : "flex-row"
             )}
           >
@@ -191,14 +194,14 @@ export default function ChatInterface({
             <div className={cn("flex flex-col gap-1.5 max-w-[85%]", msg.role === "user" ? "items-end text-right" : "items-start")}>
               <div
                 className={cn(
-                  "px-5 py-3.5 rounded-2xl text-[15px] leading-relaxed shadow-sm whitespace-pre-wrap break-words",
+                  "px-5 py-3.5 rounded-2xl text-[15px] leading-relaxed shadow-sm whitespace-pre-wrap break-words min-h-[44px]",
                   msg.role === "user"
                     ? "bg-zinc-800 text-zinc-200 rounded-tr-none border border-zinc-700"
                     : "bg-zinc-900 text-zinc-200 rounded-tl-none border border-zinc-800"
                 )}
               >
-                {msg.content === "" && msg.role === "assistant" && isLoading ? (
-                  <div className="flex items-center gap-2 text-zinc-500 italic">
+                {msg.content === "" && msg.role === "assistant" ? (
+                  <div className="flex items-center gap-2 text-zinc-500 italic min-h-[22px]">
                     <Loader2 className="animate-spin" size={14} />
                     <span>{statusText}</span>
                   </div>
@@ -207,22 +210,11 @@ export default function ChatInterface({
                 )}
               </div>
               <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest px-1 min-h-[15px]">
-                {isMounted ? dayjs(msg.timestamp).format("HH:mm") : null}
+                {isMounted && msg.timestamp ? dayjs(msg.timestamp).format("HH:mm") : null}
               </span>
             </div>
           </div>
         ))}
-        
-        {showLoader && (
-          <div className="flex gap-4 max-w-4xl mx-auto items-center animate-in fade-in duration-300">
-            <div className="w-10 h-10 rounded-xl bg-zinc-900 flex items-center justify-center border border-zinc-800 shrink-0">
-              <Loader2 className="text-cyan-500 animate-spin" size={18} />
-            </div>
-            <div className="bg-zinc-900/50 px-4 py-2.5 rounded-2xl rounded-tl-none border border-zinc-800 flex items-center gap-2">
-              <span className="text-xs text-zinc-400 font-medium">{statusText}</span>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Input */}
@@ -254,3 +246,5 @@ export default function ChatInterface({
     </div>
   );
 }
+
+

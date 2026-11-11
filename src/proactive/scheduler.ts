@@ -1,99 +1,132 @@
 // ════════════════════════════════════════════════════════════════════════════════
-// src/proactive/scheduler.ts — Cron-based proactive task scheduler
+// src/proactive/scheduler.ts — Proactive Task Scheduler Adapter
+// Delegates all background jobs to the authoritative SchedulerEngine & WorkflowEngine.
 // ════════════════════════════════════════════════════════════════════════════════
 
-import cron, { type ScheduledTask } from "node-cron";
 import { env } from "@config/index.js";
 import { generateMorningBriefing } from "./briefing.js";
 import { generateNightCheck } from "./nightCheck.js";
 import { checkDeadlines, checkBatteryAlert, checkLateNightAlert } from "./alerts.js";
 import { runMemoryMaintenance } from "@memory/summarizer.js";
 import { archiveStaleNodes } from "@memory/graph.js";
-import { persistLearnedPatterns } from "@emotion/learner.js";
 import { createLogger } from "@utils/logger.js";
+import {
+  start as startSchedulerEngine,
+  stop as stopSchedulerEngine,
+  createSchedule,
+  getSchedule,
+} from "../scheduler/schedulerEngine.js";
 
 const log = createLogger("proactive/scheduler");
 
-const jobs: ScheduledTask[] = [];
+/** Proactive job definitions routing through WorkflowEngine */
+const PROACTIVE_JOBS = [
+  {
+    id: "proactive_morning_briefing",
+    name: "Morning Briefing",
+    cron: env.MORNING_BRIEFING_CRON || "0 8 * * *",
+    actionName: "generateMorningBriefing",
+    actionFn: async () => { await generateMorningBriefing(); },
+  },
+  {
+    id: "proactive_night_check",
+    name: "Night Check-in",
+    cron: env.NIGHT_CHECK_CRON || "0 22 * * *",
+    actionName: "generateNightCheck",
+    actionFn: async () => { await generateNightCheck(); },
+  },
+  {
+    id: "proactive_deadline_check",
+    name: "Deadline Alerts",
+    cron: env.DEADLINE_CHECK_CRON || "0 9 * * *",
+    actionName: "checkDeadlines",
+    actionFn: async () => { await checkDeadlines(); },
+  },
+  {
+    id: "proactive_battery_check",
+    name: "Battery Monitoring",
+    cron: "*/30 * * * *",
+    actionName: "checkBatteryAlert",
+    actionFn: async () => { await checkBatteryAlert(); },
+  },
+  {
+    id: "proactive_late_night_check",
+    name: "Late Night Health Check",
+    cron: "0 * * * *",
+    actionName: "checkLateNightAlert",
+    actionFn: async () => { checkLateNightAlert(); },
+  },
+  {
+    id: "proactive_memory_maintenance",
+    name: "Memory Maintenance",
+    cron: "0 */2 * * *",
+    actionName: "runMemoryMaintenance",
+    actionFn: async () => { await runMemoryMaintenance(); },
+  },
+  {
+    id: "proactive_graph_archival",
+    name: "Graph Maintenance",
+    cron: "0 */4 * * *",
+    actionName: "archiveStaleNodes",
+    actionFn: async () => { archiveStaleNodes(); },
+  },
+];
 
 /**
- * Start all proactive scheduled jobs.
- * Each job runs a specific task at a cron-defined interval.
+ * Start all proactive scheduled jobs by delegating to the authoritative SchedulerEngine.
  */
 export function startScheduler(): void {
+  // Always start authoritative SchedulerEngine polling loop so user reminders run
+  startSchedulerEngine(1000);
+
   if (!env.PROACTIVE_ENABLED) {
-    log.info("Proactive scheduler is disabled");
+    log.info("Proactive background recommendations disabled, but SchedulerEngine is active for user reminders.");
     return;
   }
 
-  log.info("Starting proactive scheduler...");
+  log.info("Starting proactive scheduler adapter via SchedulerEngine...");
 
-  // 1. Morning briefing
-  jobs.push(
-    cron.schedule(env.MORNING_BRIEFING_CRON, async () => {
-      log.info("⏰ Running morning briefing");
-      try { await generateMorningBriefing(); }
-      catch (e) { log.error("Morning briefing failed", e); }
-    }, { timezone: env.USER_TIMEZONE })
-  );
+  // Register each proactive job in SchedulerEngine if not already created
+  for (const jobDef of PROACTIVE_JOBS) {
+    try {
+      const existing = getSchedule(jobDef.id);
+      if (!existing) {
+        createSchedule({
+          id: jobDef.id,
+          name: jobDef.name,
+          schedule: {
+            type: "CRON",
+            cronExpression: jobDef.cron,
+          },
+          workflowTemplate: {
+            name: `${jobDef.name} Workflow`,
+            steps: [
+              {
+                name: jobDef.name,
+                type: "ACTION",
+                input: {
+                  actionName: jobDef.actionName,
+                  actionFn: jobDef.actionFn,
+                },
+              },
+            ],
+          },
+        });
+      }
+    } catch (e: any) {
+      log.error(`Failed to register proactive job [${jobDef.id}]: ${e.message}`);
+    }
+  }
 
-  // 2. Night check-in
-  jobs.push(
-    cron.schedule(env.NIGHT_CHECK_CRON, async () => {
-      log.info("🌙 Running night check-in");
-      try { await generateNightCheck(); }
-      catch (e) { log.error("Night check failed", e); }
-    }, { timezone: env.USER_TIMEZONE })
-  );
-
-  // 3. Deadline alerts
-  jobs.push(
-    cron.schedule(env.DEADLINE_CHECK_CRON, async () => {
-      log.info("📋 Checking deadlines");
-      try { await checkDeadlines(); }
-      catch (e) { log.error("Deadline check failed", e); }
-    }, { timezone: env.USER_TIMEZONE })
-  );
-
-  // 4. Battery monitoring (every 30 mins)
-  jobs.push(
-    cron.schedule("*/30 * * * *", async () => {
-      try { await checkBatteryAlert(); }
-      catch (e) { log.error("Battery check failed", e); }
-    }, { timezone: env.USER_TIMEZONE })
-  );
-
-  // 5. Late night health check (every hour)
-  jobs.push(
-    cron.schedule("0 * * * *", () => {
-      try { checkLateNightAlert(); }
-      catch (e) { log.error("Late night check failed", e); }
-    }, { timezone: env.USER_TIMEZONE })
-  );
-
-  // 6. Memory maintenance (every 2 hours)
-  jobs.push(
-    cron.schedule("0 */2 * * *", async () => {
-      log.info("🧠 Running memory maintenance");
-      try { await runMemoryMaintenance(); }
-      catch (e) { log.error("Memory maintenance failed", e); }
-    }, { timezone: env.USER_TIMEZONE })
-  );
-
-  // 8. Graph maintenance (every 4 hours)
-  jobs.push(
-    cron.schedule("0 */4 * * *", () => {
-      log.info("🕸️ Running graph archival");
-      try { archiveStaleNodes(); }
-      catch (e) { log.error("Graph archival failed", e); }
-    }, { timezone: env.USER_TIMEZONE })
-  );
-
-  log.info(`Scheduler started with ${jobs.length} jobs`);
+  // Start authoritative SchedulerEngine polling loop
+  startSchedulerEngine(1000);
+  log.info("Proactive scheduler adapter successfully started.");
 }
 
+/**
+ * Stop proactive scheduler by stopping authoritative SchedulerEngine.
+ */
 export function stopScheduler(): void {
-  for (const job of jobs) job.stop();
-  jobs.length = 0;
-  log.info("Scheduler stopped");
+  stopSchedulerEngine();
+  log.info("Proactive scheduler adapter stopped.");
 }

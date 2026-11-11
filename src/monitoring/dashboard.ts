@@ -5,6 +5,8 @@ import { getOllamaMetrics } from "./ollamaMetrics.js";
 import { getToolMetrics, getApiMetrics } from "../tools/toolMetrics.js";
 import { getHealthStatus } from "./health.js";
 import { getActiveAlerts } from "./alerts.js";
+import { getSchedulerMetrics } from "./schedulerMonitor.js";
+import { tracer } from "./tracer.js";
 
 import { getResilienceMetrics } from "../resilience/resilienceMetrics.js";
 import { getIntelligenceTelemetry } from "../intelligence/intelligenceMetrics.js";
@@ -19,11 +21,14 @@ export async function getDashboard() {
   const alerts = getActiveAlerts();
   const resilience = getResilienceMetrics();
   const intelligence = getIntelligenceTelemetry();
+  const scheduler = getSchedulerMetrics();
+  const recentTraces = tracer.listTraces(10);
 
   return {
     uptime: system.uptimeMs,
     health,
     alerts,
+    recentTraces,
     metrics: {
       system,
       agents,
@@ -32,6 +37,7 @@ export async function getDashboard() {
       api,
       resilience,
       intelligence,
+      scheduler,
       memory: system.memoryUsage,
     },
   };

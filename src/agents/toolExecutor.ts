@@ -19,25 +19,42 @@ export interface RetryResult {
 export interface ExecutorConfig {
   maxAttempts?: number; // default 3
   baseDelayMs?: number; // default 200
-  timeoutMs?: number; // per‑attempt timeout, default 5000ms
+  timeoutMs?: number; // per‑attempt timeout
+  toolName?: string;
+  category?: string;
+  breakerName?: string;
+}
+
+export function resolveToolTimeout(toolNameOrCategory?: string, customTimeoutMs?: number): number {
+  if (customTimeoutMs && customTimeoutMs > 0) {
+    return customTimeoutMs;
+  }
+  if (!toolNameOrCategory) {
+    return 10000;
+  }
+  const name = toolNameOrCategory.toLowerCase();
+  if (
+    name.includes("browser") ||
+    name.includes("youtube") ||
+    name.includes("computer") ||
+    name.includes("playwright")
+  ) {
+    return 30000;
+  }
+  if (name.includes("mcp") || name.includes("search") || name.includes("web")) {
+    return 20000;
+  }
+  return 10000;
 }
 
 const defaultConfig: ExecutorConfig = {
   maxAttempts: 3,
   baseDelayMs: 200,
-  timeoutMs: 5000,
+  timeoutMs: 10000,
 };
 
 const log = createLogger("agents/toolExecutor");
 
-/**
- * Execute a generic async tool function with retry, exponential back‑off
- * and optional per‑attempt timeout.
- *
- * @param toolFn   The async function to execute. It may be any user‑provided tool.
- * @param args     Arguments to pass to the tool function.
- * @param config   Optional overrides for maxAttempts, baseDelayMs, timeoutMs.
- */
 import { breakerRegistry } from "../resilience/circuitBreaker.js";
 
 export async function executeTool<T = unknown>(
@@ -47,7 +64,9 @@ export async function executeTool<T = unknown>(
 ): Promise<RetryResult> {
   const args = Array.isArray(argsOrConfig) ? argsOrConfig : [];
   const activeConfig = !Array.isArray(argsOrConfig) ? argsOrConfig : config;
-  const { maxAttempts, baseDelayMs, timeoutMs } = { ...defaultConfig, ...activeConfig };
+  const maxAttempts = activeConfig?.maxAttempts ?? defaultConfig.maxAttempts ?? 3;
+  const baseDelayMs = activeConfig?.baseDelayMs ?? defaultConfig.baseDelayMs ?? 200;
+  const timeoutMs = resolveToolTimeout(activeConfig?.toolName ?? activeConfig?.category, activeConfig?.timeoutMs);
   let attempt = 0;
   let lastError: any = null;
 

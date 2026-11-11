@@ -68,15 +68,39 @@ export async function clipboard(action: 'read' | 'write', text?: string): Promis
   }
 }
 
-/** Show system notifications using node-notifier */
+/** Show system notifications using native Windows toast or node-notifier */
 export async function notifications(title: string, message: string): Promise<boolean> {
   try {
-    notifier.notify({
-      title,
-      message,
-      wait: false,
-    });
-    return true;
+    if (process.platform === 'win32') {
+      try {
+        const psCommand = `
+          [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+          $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+          $textNodes = $template.GetElementsByTagName('text')
+          $textNodes.Item(0).AppendChild($template.CreateTextNode('${title.replace(/'/g, "''")}')) | Out-Null
+          $textNodes.Item(1).AppendChild($template.CreateTextNode('${message.replace(/'/g, "''")}')) | Out-Null
+          $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe')
+          $notification = [Windows.UI.Notifications.ToastNotification]::new($template)
+          $notifier.Show($notification)
+        `.trim().replace(/\n/g, '; ');
+
+        const { exec } = await import('child_process');
+        await new Promise<void>((resolve, reject) => {
+          exec(`powershell -NoProfile -Command "${psCommand}"`, { windowsHide: true }, (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+        return true;
+      } catch {
+        // Fallback to node-notifier if PowerShell WinRT is restricted
+        notifier.notify({ title, message, wait: false });
+        return true;
+      }
+    } else {
+      notifier.notify({ title, message, wait: false });
+      return true;
+    }
   } catch (_) {
     return false;
   }
@@ -95,20 +119,22 @@ export async function screenshot(): Promise<string> {
   const filePath = path.join(dir, `screenshot_${Date.now()}.png`);
 
   try {
-    if (process.platform === 'win32') {
-      const psCommand = `
-        Add-Type -AssemblyName System.Windows.Forms
-        Add-Type -AssemblyName System.Drawing
-        $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-        $bmp = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
-        $g = [System.Drawing.Graphics]::FromImage($bmp)
-        $g.CopyFromScreen($screen.X, $screen.Y, 0, 0, $bmp.Size)
-        $bmp.Save('${filePath.replace(/\\/g, '\\\\')}')
-        $g.Dispose()
-        $bmp.Dispose()
-      `.trim().replace(/\n/g, '; ');
+    // Primary engine: robust cross-platform screenshot-desktop
+    try {
+      const screenshotDesktop = (await import('screenshot-desktop')).default || (await import('screenshot-desktop'));
+      await screenshotDesktop({ filename: filePath });
+      if (fs.existsSync(filePath)) {
+        return filePath;
+      }
+    } catch (sdErr) {
+      // Fall through to OS native fallback
+    }
 
-      execSync(`powershell -NoProfile -Command "${psCommand}"`, { stdio: 'ignore' });
+    if (process.platform === 'win32') {
+      const scriptPath = path.join(process.cwd(), 'src', 'tools', 'laptop', 'screenshot.ps1');
+      if (fs.existsSync(scriptPath)) {
+        execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" -OutputPath "${filePath}"`, { stdio: 'ignore' });
+      }
     } else if (process.platform === 'darwin') {
       execSync(`screencapture "${filePath}"`, { stdio: 'ignore' });
     } else {

@@ -149,3 +149,60 @@ export async function getBatteryStatus(): Promise<string> {
   if (!bat.hasBattery) return "No battery (desktop)";
   return `${bat.percent}% ${bat.isCharging ? "⚡ charging" : "🔋 on battery"}`;
 }
+
+export async function adjustVolume(
+  direction: "up" | "down" | "mute" | "unmute" | "set",
+  value = 10
+): Promise<{ success: boolean; message: string; volume?: number; muted?: boolean }> {
+  try {
+    if (process.platform === "win32") {
+      const { exec } = await import("child_process");
+      const path = await import("path");
+      const { fileURLToPath } = await import("url");
+      const currentDir = path.dirname(fileURLToPath(import.meta.url));
+      const scriptPath = path.join(currentDir, "volumeControl.ps1");
+
+      const res = await new Promise<{ volume?: number; muted?: boolean }>((resolve, reject) => {
+        exec(
+          `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}" -Action ${direction} -Value ${value}`,
+          { windowsHide: true },
+          (err, stdout) => {
+            if (err) {
+              // Fallback to WScript.Shell SendKeys loop if execution policy or COM fails
+              const charCode = direction === "down" ? 174 : direction === "mute" || direction === "unmute" ? 173 : 175;
+              const repeat = direction === "mute" || direction === "unmute" ? 1 : 5;
+              const fallbackCmd = `powershell -NoProfile -Command "1..${repeat} | ForEach-Object { (New-Object -ComObject WScript.Shell).SendKeys([char]${charCode}) }"`;
+              exec(fallbackCmd, { windowsHide: true }, (fbErr) => {
+                if (fbErr) reject(err);
+                else resolve({});
+              });
+            } else {
+              try {
+                const parsed = JSON.parse(stdout.trim());
+                resolve(parsed);
+              } catch {
+                resolve({});
+              }
+            }
+          }
+        );
+      });
+
+      if (direction === "set") {
+        return { success: true, message: `Volume set to ${res.volume ?? value}%`, volume: res.volume, muted: res.muted };
+      }
+      if (direction === "mute") {
+        return { success: true, message: "Volume muted", muted: true };
+      }
+      if (direction === "unmute") {
+        return { success: true, message: "Volume unmuted", muted: false };
+      }
+      const volInfo = res.volume !== undefined ? ` to ${res.volume}%` : "";
+      return { success: true, message: `Volume adjusted (${direction})${volInfo}`, volume: res.volume, muted: res.muted };
+    } else {
+      return { success: true, message: `Volume adjustment not implemented for ${process.platform}` };
+    }
+  } catch (err: any) {
+    throw new ToolError("system.volume", `Failed to adjust volume: ${err.message}`);
+  }
+}

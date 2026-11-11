@@ -444,6 +444,11 @@ export function startTUI(): void {
     console.log("\n  ✨ Creater — Your Personal AI Assistant\n");
   }
 
+  // Ensure scheduler engine runs during TUI session so due reminders trigger
+  try {
+    import("../scheduler/schedulerEngine.js").then(({ start }) => start(1000)).catch(() => {});
+  } catch {}
+
   render(<TUIApp />);
 }
 

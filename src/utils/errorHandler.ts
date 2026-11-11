@@ -210,8 +210,13 @@ export function formatErrorForUser(error: unknown): string {
     return "Unable to open requested app.";
   }
 
-  if (error instanceof LLMError) {
-    return `🤖 AI se connect nahi ho pa raha. Kya Ollama chal raha hai?`;
+  if (
+    error instanceof LLMError ||
+    errMsg.includes("ollama") ||
+    errMsg.includes("connectionrefused") ||
+    errMsg.includes("model not found")
+  ) {
+    return `🤖 AI se connect nahi ho pa raha. Kripya check karein ki Ollama chal raha hai ya cloud API key configured hai.`;
   }
   if (error instanceof ToolError) {
     return `Something went wrong while processing the request.`;

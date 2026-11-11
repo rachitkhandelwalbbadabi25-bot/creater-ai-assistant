@@ -148,17 +148,31 @@ async function runWindowsOpen(target: string, kind: LaunchKind): Promise<void> {
       log.info("WINDOWS FILE OPEN DETECTED", { target });
     }
 
-    const proc = Bun.spawn({
-      cmd: ["cmd.exe", "/c", "start", "", target],
-      stdout: "ignore",
-      stderr: "ignore",
-      windowsHide: true,
-    });
+    const cmdArgs = kind === "url" ? ["cmd.exe", "/c", "start", "", target.replace(/&/g, "^&")] : ["cmd.exe", "/c", "start", "", target];
 
-    const exitCode = await proc.exited;
+    if (typeof Bun !== "undefined") {
+      const proc = Bun.spawn({
+        cmd: cmdArgs,
+        stdout: "ignore",
+        stderr: "ignore",
+        windowsHide: true,
+      });
 
-    if (exitCode !== 0) {
-      throw new Error(`Windows open failed with exit code ${exitCode}`);
+      const exitCode = await proc.exited;
+
+      if (exitCode !== 0) {
+        throw new Error(`Windows open failed with exit code ${exitCode}`);
+      }
+    } else {
+      const { spawn } = await import("node:child_process");
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(cmdArgs[0], cmdArgs.slice(1), { windowsHide: true, detached: true, stdio: "ignore" });
+        proc.on("error", reject);
+        proc.on("exit", (code) => {
+          if (code === 0 || code === null) resolve();
+          else reject(new Error(`Windows open failed with exit code ${code}`));
+        });
+      });
     }
 
     if (IS_RUNTIME_DEBUG) {
@@ -179,31 +193,46 @@ async function runWindowsOpen(target: string, kind: LaunchKind): Promise<void> {
       log.info("WINDOWS FOLDER OPEN DETECTED", { target });
     }
     const script = "param([string]$Target) explorer.exe $Target";
-    const proc = Bun.spawn({
-      cmd: [
-        "powershell.exe",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        script,
-        target,
-      ],
-      stdout: "pipe",
-      stderr: "pipe",
-      windowsHide: true,
-    });
+    const cmdArgs = [
+      "powershell.exe",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      script,
+      target,
+    ];
 
-    const [exitCode, stdout, stderr] = await Promise.all([
-      proc.exited,
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
+    if (typeof Bun !== "undefined") {
+      const proc = Bun.spawn({
+        cmd: cmdArgs,
+        stdout: "pipe",
+        stderr: "pipe",
+        windowsHide: true,
+      });
 
-    if (exitCode !== 0) {
-      throw new Error(`Windows open failed with exit code ${exitCode}: ${stderr.trim() || stdout.trim() || "no stderr"}`);
+      const [exitCode, stdout, stderr] = await Promise.all([
+        proc.exited,
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+
+      if (exitCode !== 0) {
+        throw new Error(`Windows open failed with exit code ${exitCode}: ${stderr.trim() || stdout.trim() || "no stderr"}`);
+      }
+    } else {
+      const { spawn } = await import("node:child_process");
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(cmdArgs[0], cmdArgs.slice(1), { windowsHide: true, detached: true, stdio: "ignore" });
+        proc.on("error", reject);
+        proc.on("exit", (code) => {
+          if (code === 0 || code === null) resolve();
+          else reject(new Error(`Windows directory open failed with exit code ${code}`));
+        });
+      });
     }
+
     if (IS_RUNTIME_DEBUG) {
       log.info("WINDOWS FOLDER OPEN SUCCESS", { target });
     }

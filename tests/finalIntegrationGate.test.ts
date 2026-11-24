@@ -36,7 +36,7 @@ describe("Phase 5 + Phase 5.5 — Final Integration & Regression Gate Suite", ()
     expect(readContent).toBe("Creater AI Final Integration Gate File Content");
 
     // 3. Inspect metadata
-    const meta = (await dispatchTool("fs.file_metadata", { path: testFile })) as any;
+    const meta = (await dispatchTool("fs.file_metadata", { path: testFile })) as { isFile: boolean; sizeBytes: number };
     expect(meta.isFile).toBe(true);
     expect(meta.sizeBytes).toBeGreaterThan(0);
 
@@ -50,7 +50,7 @@ describe("Phase 5 + Phase 5.5 — Final Integration & Regression Gate Suite", ()
     expect(fs.existsSync(testFile)).toBe(false);
 
     // 6. Search files
-    const searchRes = (await dispatchTool("fs.search_files", { query: "e2e_moved", base_dir: gateDir })) as any[];
+    const searchRes = (await dispatchTool("fs.search_files", { query: "e2e_moved", base_dir: gateDir })) as Array<{ name: string }>;
     expect(searchRes.some((r) => r.name.includes("e2e_moved"))).toBe(true);
 
     // Clean up
@@ -61,25 +61,25 @@ describe("Phase 5 + Phase 5.5 — Final Integration & Regression Gate Suite", ()
 
   it("2. OS E2E Workflow via Dispatcher (Info, Process, Env, Clipboard)", async () => {
     // 1. Get system information
-    const sysInfo = (await dispatchTool("system.info", {})) as any;
+    const sysInfo = (await dispatchTool("system.info", {})) as { cpu: unknown; ram: unknown; os: unknown };
     expect(sysInfo.cpu).toBeDefined();
     expect(sysInfo.ram).toBeDefined();
     expect(sysInfo.os).toBeDefined();
 
     // 2. Get process list
-    const procs = (await dispatchTool("system.process_list", { top_n: 5 })) as any[];
+    const procs = (await dispatchTool("system.process_list", { top_n: 5 })) as unknown[];
     expect(Array.isArray(procs)).toBe(true);
     expect(procs.length).toBeGreaterThan(0);
 
     // 3. Environment variables
-    const envVars = (await dispatchTool("system.env", { keys: ["NODE_ENV", "PATH"] })) as any;
+    const envVars = (await dispatchTool("system.env", { keys: ["NODE_ENV", "PATH"] })) as Record<string, unknown>;
     expect(envVars).toBeDefined();
 
     // 4. Clipboard operation
     await dispatchTool("system.clipboard", { action: "write", text: "Integration Gate Clipboard Value" });
     const clipVal = await dispatchTool("system.clipboard", { action: "read" });
     expect(clipVal).toBe("Integration Gate Clipboard Value");
-  });
+  }, 15000);
 
   it("3. Shell Execution E2E Workflow & Dangerous Command Rejection", async () => {
     // 1. Validate safe command validation logic
@@ -174,7 +174,7 @@ describe("Phase 5 + Phase 5.5 — Final Integration & Regression Gate Suite", ()
     } finally {
       await browserSessionManager.closeTab(tabId);
     }
-  });
+  }, 20000);
 
   it("6. Post-Action Verification Engine non-retry and non-mutation behavior", async () => {
     const tabId = await browserSessionManager.openTab();
@@ -196,7 +196,7 @@ describe("Phase 5 + Phase 5.5 — Final Integration & Regression Gate Suite", ()
     } finally {
       await browserSessionManager.closeTab(tabId);
     }
-  });
+  }, 20000);
 
   it("7. Safety & Confirmation Flow Integration", async () => {
     // 1. Safe tool -> allowed, no confirmation

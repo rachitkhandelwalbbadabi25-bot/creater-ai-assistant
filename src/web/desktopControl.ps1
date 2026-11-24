@@ -1,7 +1,7 @@
-# ════════════════════════════════════════════════════════════════════════════════
-# src/tools/laptop/desktopControl.ps1 — Windows Desktop Native CUA Input Helper
+# ================================================================================
+# src/tools/laptop/desktopControl.ps1 -- Windows Desktop Native CUA Input Helper
 # Provides fast, native mouse movements, clicks, window focus, and keystrokes.
-# ════════════════════════════════════════════════════════════════════════════════
+# ================================================================================
 
 param(
     [Parameter(Mandatory=$true)]
@@ -130,7 +130,7 @@ switch ($Action.ToLower()) {
                     $wshell = New-Object -ComObject WScript.Shell
                     $wshell.SendKeys($Text)
                 } catch {
-                    # Non-interactive session fallback
+                    $null = $_
                 }
             }
         }
@@ -150,7 +150,7 @@ switch ($Action.ToLower()) {
                     $wshell = New-Object -ComObject WScript.Shell
                     $wshell.SendKeys($Key)
                 } catch {
-                    # Non-interactive session fallback
+                    $null = $_
                 }
             }
         }
@@ -185,7 +185,7 @@ switch ($Action.ToLower()) {
                         }
                     }
                 }
-            } catch {}
+            } catch { $null = $_ }
         }
 
         # Enumerate known user desktop GUI applications
@@ -201,7 +201,7 @@ switch ($Action.ToLower()) {
                     $openApps += $displayName
                 }
             }
-        } catch {}
+        } catch { $null = $_ }
 
         [PSCustomObject]@{
             success = $true

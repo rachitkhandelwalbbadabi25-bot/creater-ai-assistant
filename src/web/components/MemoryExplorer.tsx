@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
-import { Search, Brain, GitBranch, Layers, Archive, BarChart3, Loader2, X } from "lucide-react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { Search, Brain, GitBranch, Layers, BarChart3, Loader2, X } from "lucide-react";
 import { getMemoriesAction, getGraphAction } from "@/app/actions";
 import ForceDirectedGraph from "./ForceDirectedGraph";
 import { cn } from "@/lib/utils";
@@ -34,6 +34,12 @@ interface GraphStats {
   archivedCount: number;
 }
 
+interface VisualEdge {
+  source: string;
+  target: string;
+  relation: string;
+}
+
 type Tab = "facts" | "graph";
 
 const NODE_TYPE_ICONS: Record<string, string> = {
@@ -57,37 +63,44 @@ export default function MemoryExplorer() {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
 
-  const fetchFacts = async (search?: string) => {
-    setIsLoading(true);
+  const fetchFacts = useCallback(async (search?: string) => {
     const res = await getMemoriesAction(search);
-    if (res.success) setMemories(res.data as Memory[]);
+    if (res.success && res.data) setMemories(res.data);
     setIsLoading(false);
-  };
+  }, []);
 
-  const fetchGraph = async (search?: string) => {
-    setIsLoading(true);
+  const fetchGraph = useCallback(async (search?: string) => {
     const res = await getGraphAction(search);
-    if (res.success) {
-      setNodes((res.data as any).nodes ?? []);
-      setStats((res.data as any).stats ?? { nodeCount: 0, edgeCount: 0, archivedCount: 0 });
+    if (res.success && res.data) {
+      setNodes(res.data.nodes ?? []);
+      setStats(res.data.stats ?? { nodeCount: 0, edgeCount: 0, archivedCount: 0 });
     }
     setIsLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
-    if (tab === "facts") fetchFacts();
-    else fetchGraph();
-  }, [tab]);
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      setIsLoading(true);
+      if (tab === "facts") void fetchFacts();
+      else void fetchGraph();
+    });
+    return () => {
+      active = false;
+    };
+  }, [tab, fetchFacts, fetchGraph]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (tab === "facts") fetchFacts(query);
-    else fetchGraph(query);
+    setIsLoading(true);
+    if (tab === "facts") void fetchFacts(query);
+    else void fetchGraph(query);
   };
 
   const graphVisualData = useMemo(() => {
     const visualNodes = nodes.map(n => ({ id: n.id, label: n.label, type: n.type }));
-    const visualEdges: any[] = [];
+    const visualEdges: VisualEdge[] = [];
     nodes.forEach(n => {
       n.edges.forEach(e => {
         const targetNode = nodes.find(tn => tn.label === e.target.label);
@@ -245,7 +258,7 @@ export default function MemoryExplorer() {
   );
 }
 
-function StatBadge({ icon, label, value, color }: { icon: any, label: string, value: number, color: string }) {
+function StatBadge({ icon, label, value, color }: { icon: React.ReactNode, label: string, value: number, color: string }) {
   const colors: Record<string, string> = {
     cyan: "text-cyan-400 bg-cyan-400/10 border-cyan-400/20",
     violet: "text-violet-400 bg-violet-400/10 border-violet-400/20",

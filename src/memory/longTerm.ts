@@ -77,7 +77,7 @@ export function storeFact(
   statements().upsertStmt.run(id, category, key, value, confidence, source ?? null);
   log.mem(`Stored fact: [${category}] ${key} = ${value}`);
   // Auto-link into the knowledge graph
-  try { autoLinkFact(category, key, value); } catch (_) {}
+  try { autoLinkFact(category, key, value); } catch { /* auto-link is best-effort */ }
   return { id, category, key, value, confidence, source: source ?? null, createdAt: "", updatedAt: "" };
 }
 

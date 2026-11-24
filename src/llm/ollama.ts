@@ -38,7 +38,7 @@ let operationSeq = 0;
 
 // Global latency tracker map (requestId -> stages)
 const latencyMap = new Map<string, Record<string, number>>();
-let __currentRequestId = "";
+const __currentRequestId = "";
 
 type OllamaWarmupState = {
   started: boolean;

@@ -4,7 +4,56 @@ import { processMessageStreaming } from "@graph/supervisor.js";
 import { getAppStats } from "@utils/stats.js";
 import { getSystemInfo } from "@tools/laptop/system.js";
 import { db } from "@memory/db.js";
-import { env } from "@config/index.js";
+
+export interface MemoryFactRow {
+  id: string;
+  category: string;
+  key: string;
+  value: string;
+  confidence: number;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface MoodLogRow {
+  mood: string;
+  created_at: string;
+}
+
+export interface ActivityLogRow {
+  date: string;
+  count: number;
+}
+
+export interface MemoryNodeRow {
+  id: string;
+  type: string;
+  label: string;
+  description: string | null;
+  importance: number;
+  access_count: number;
+  tags: string | null;
+}
+
+export interface MemoryEdgeRow {
+  id?: string;
+  from_id?: string;
+  to_id?: string;
+  relation: string;
+  weight: number;
+  target_label: string;
+  target_type: string;
+}
+
+export interface GraphStatsRow {
+  nodeCount: number;
+  edgeCount: number;
+  archivedCount: number;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 /**
  * Sends a message to the AI supervisor and returns the final response.
@@ -14,9 +63,9 @@ export async function chatAction(message: string, onPartial?: (text: string) => 
     // Use streaming version if a callback is provided, otherwise also stream without callback
     const final = await processMessageStreaming(message, "web", onPartial);
     return { success: true, response: final };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Chat Action Error:", error);
-    let errorMessage = error.message;
+    let errorMessage = getErrorMessage(error);
     if (errorMessage && errorMessage.toLowerCase().includes("not found")) {
       errorMessage = `Model not found error: ${errorMessage}. Please check your model configuration.`;
     }
@@ -41,8 +90,8 @@ export async function getStatusAction() {
         stats: appStats,
       },
     };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -52,7 +101,7 @@ export async function getStatusAction() {
 export async function getMemoriesAction(query?: string) {
   try {
     let sql = "SELECT * FROM facts";
-    const params: any[] = [];
+    const params: string[] = [];
 
     if (query) {
       sql += " WHERE value LIKE ? OR category LIKE ? OR key LIKE ?";
@@ -61,10 +110,10 @@ export async function getMemoriesAction(query?: string) {
     }
 
     sql += " ORDER BY updated_at DESC LIMIT 100";
-    const rows = db.prepare(sql).all(...params);
+    const rows = db.prepare(sql).all(...params) as MemoryFactRow[];
     return { success: true, data: rows };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -79,7 +128,7 @@ export async function getAnalyticsAction() {
       FROM emotion_log 
       WHERE created_at >= date('now', '-7 days')
       ORDER BY created_at ASC
-    `).all();
+    `).all() as MoodLogRow[];
 
     // 2. Activity (messages per day for last 7 days)
     const activityRows = db.prepare(`
@@ -88,7 +137,7 @@ export async function getAnalyticsAction() {
       WHERE created_at >= date('now', '-7 days')
       GROUP BY date(created_at)
       ORDER BY date ASC
-    `).all();
+    `).all() as ActivityLogRow[];
 
     return {
       success: true,
@@ -97,22 +146,22 @@ export async function getAnalyticsAction() {
         activity: activityRows,
       }
     };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
 /**
  * Updates application settings.
  */
-export async function updateSettingsAction(settings: any) {
+export async function updateSettingsAction(settings: Record<string, unknown>) {
   try {
     // In a real app, you might save these to a config file or DB.
     // For now, we'll return success to simulate the state update.
     console.log("Updating settings:", settings);
     return { success: true };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }
 
@@ -122,16 +171,16 @@ export async function updateSettingsAction(settings: any) {
  */
 export async function getGraphAction(query?: string) {
   try {
-    let nodeRows: any[];
+    let nodeRows: MemoryNodeRow[];
     if (query) {
       const q = `%${query}%`;
       nodeRows = db.prepare(
         `SELECT * FROM memory_nodes WHERE label LIKE ? OR description LIKE ? ORDER BY importance DESC LIMIT 60`
-      ).all(q, q);
+      ).all(q, q) as MemoryNodeRow[];
     } else {
       nodeRows = db.prepare(
         `SELECT * FROM memory_nodes ORDER BY importance DESC, access_count DESC LIMIT 60`
-      ).all();
+      ).all() as MemoryNodeRow[];
     }
 
     // Attach edges to each node
@@ -144,14 +193,14 @@ export async function getGraphAction(query?: string) {
     );
 
     const nodes = nodeRows.map(node => {
-      const edges = (edgeStmt.all(node.id) as any[]).map(e => ({
+      const edges = (edgeStmt.all(node.id) as MemoryEdgeRow[]).map(e => ({
         relation: e.relation,
         weight: e.weight,
         target: { label: e.target_label, type: e.target_type },
       }));
       return {
         ...node,
-        tags: (() => { try { return JSON.parse(node.tags || "[]"); } catch { return []; } })(),
+        tags: ((): string[] => { try { return JSON.parse(node.tags || "[]") as string[]; } catch { return []; } })(),
         edges,
       };
     });
@@ -161,10 +210,10 @@ export async function getGraphAction(query?: string) {
         (SELECT COUNT(*) FROM memory_nodes)    as nodeCount,
         (SELECT COUNT(*) FROM memory_edges)    as edgeCount,
         (SELECT COUNT(*) FROM memory_archives) as archivedCount`
-    ).get();
+    ).get() as GraphStatsRow;
 
     return { success: true, data: { nodes, stats } };
-  } catch (error: any) {
-    return { success: false, error: error.message };
+  } catch (error: unknown) {
+    return { success: false, error: getErrorMessage(error) };
   }
 }

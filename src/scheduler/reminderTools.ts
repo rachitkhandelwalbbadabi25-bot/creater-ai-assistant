@@ -159,8 +159,8 @@ export function parseReminderTime(
   }
 
   // 2. Absolute time matching: e.g. "9 pm", "9:05 pm", "9;42 am", "9.42 am", "21:00", "today 9:05 pm", "tomorrow 8 am"
-  let isTomorrow = text.includes("tomorrow");
-  let isToday = text.includes("today");
+  const isTomorrow = text.includes("tomorrow");
+  const isToday = text.includes("today");
 
   // Extract time pattern supporting colon, semicolon, and dot separators
   const timeMatch = text.match(/(\d{1,2})(?:[:;.](\d{2}))?\s*(am|pm)?/i);

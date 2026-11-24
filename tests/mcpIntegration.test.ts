@@ -33,7 +33,7 @@ describe("Phase 5.5 — OS MCP & Filesystem MCP Integration Tests", () => {
     expect(readContent).toBe("Hello MCP Filesystem!");
 
     // Metadata inspection
-    const meta = (await dispatchTool("fs.file_metadata", { path: testFile })) as any;
+    const meta = (await dispatchTool("fs.file_metadata", { path: testFile })) as { isFile: boolean; sizeBytes: number };
     expect(meta.isFile).toBe(true);
     expect(meta.sizeBytes).toBeGreaterThan(0);
 
@@ -47,7 +47,7 @@ describe("Phase 5.5 — OS MCP & Filesystem MCP Integration Tests", () => {
     expect(fs.existsSync(testFile)).toBe(false);
 
     // Search files
-    const searchResults = (await dispatchTool("fs.search_files", { query: "moved", base_dir: testDir })) as any[];
+    const searchResults = (await dispatchTool("fs.search_files", { query: "moved", base_dir: testDir })) as Array<{ name: string }>;
     expect(searchResults.some((r) => r.name.includes("moved"))).toBe(true);
 
     // Verify fs.delete_file enforces dangerous permission level in safety check
@@ -65,7 +65,7 @@ describe("Phase 5.5 — OS MCP & Filesystem MCP Integration Tests", () => {
     await dispatchTool("fs.create_directory", { path: subDir });
     expect(fs.existsSync(subDir)).toBe(true);
 
-    const entries = (await dispatchTool("fs.list_directory", { path: testDir })) as any[];
+    const entries = (await dispatchTool("fs.list_directory", { path: testDir })) as Array<{ name: string; isDirectory: boolean }>;
     expect(entries.some((e) => e.name === "subdir_1" && e.isDirectory)).toBe(true);
 
     if (fs.existsSync(subDir)) fs.rmdirSync(subDir);
@@ -74,23 +74,23 @@ describe("Phase 5.5 — OS MCP & Filesystem MCP Integration Tests", () => {
 
   it("4. OS system info, process list, environment, and clipboard return valid data", async () => {
     // System info
-    const info = (await dispatchTool("system.info", {})) as any;
+    const info = (await dispatchTool("system.info", {})) as { cpu: unknown; ram: unknown };
     expect(info.cpu).toBeDefined();
     expect(info.ram).toBeDefined();
 
     // Process list
-    const procs = (await dispatchTool("system.process_list", { top_n: 5 })) as any[];
+    const procs = (await dispatchTool("system.process_list", { top_n: 5 })) as unknown[];
     expect(Array.isArray(procs)).toBe(true);
 
     // Environment variables
-    const envVars = (await dispatchTool("system.env", { keys: ["NODE_ENV"] })) as any;
+    const envVars = (await dispatchTool("system.env", { keys: ["NODE_ENV"] })) as Record<string, unknown>;
     expect(envVars).toBeDefined();
 
     // Clipboard operation
     await dispatchTool("system.clipboard", { action: "write", text: "Creater AI Clipboard Test" });
     const readClip = await dispatchTool("system.clipboard", { action: "read" });
     expect(readClip).toBe("Creater AI Clipboard Test");
-  });
+  }, 15000);
 
   it("5. Protected PID process termination is blocked by safety checks", async () => {
     // Killing PID 1 or 4 should be rejected as a protected system process

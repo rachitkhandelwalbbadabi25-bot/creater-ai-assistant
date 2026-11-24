@@ -1,12 +1,10 @@
 "use client";
 
 import React, { useState } from "react";
-import { 
-  Settings as SettingsIcon, 
-  Shield, 
-  MessageSquare, 
-  Bell, 
-  Cpu, 
+import {
+  Settings as SettingsIcon,
+  Shield,
+  Bell,
   Lock,
   Eye,
   Save,
@@ -14,7 +12,6 @@ import {
   Key
 } from "lucide-react";
 import { updateSettingsAction } from "@/app/actions";
-import { cn } from "@/lib/utils";
 
 export default function Settings() {
   const [isSaving, setIsSaving] = useState(false);
@@ -39,7 +36,7 @@ export default function Settings() {
           </h2>
           <p className="text-zinc-500 text-sm mt-1 font-medium uppercase tracking-widest">Configure AI Personality & System Safety</p>
         </div>
-        <button 
+        <button
           onClick={handleSave}
           className="flex items-center gap-2 px-6 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-white rounded-xl font-bold text-sm transition-all shadow-lg shadow-cyan-500/20"
         >
@@ -58,10 +55,10 @@ export default function Settings() {
 
         {/* Safety & Tools */}
         <SettingsGroup icon={<Shield size={18} />} title="Safety & Permissions">
-          <SelectItem 
-            label="Safety Mode" 
-            options={["Strict", "Moderate", "Permissive"]} 
-            description="Control how much verification tools require." 
+          <SelectItem
+            label="Safety Mode"
+            options={["Strict", "Moderate", "Permissive"]}
+            description="Control how much verification tools require."
           />
           <ToggleItem label="Shell Confirmation" description="Ask before running sensitive bash commands." defaultChecked />
           <ToggleItem label="Auto-Skill Generation" description="Allow AI to suggest new skills from patterns." defaultChecked />
@@ -69,10 +66,10 @@ export default function Settings() {
 
         {/* Interface & Models */}
         <SettingsGroup icon={<Eye size={18} />} title="Models & Output">
-          <SelectItem 
-            label="Global Model Override" 
-            options={["Auto-Routing (Smart)", "claude-3-5-sonnet-20241022", "gpt-4o", "gemini-1.5-pro", "qwen2.5:7b"]} 
-            description="Force a specific model for all tasks (TUI & Web). Auto uses local for fast tasks, cloud for complex." 
+          <SelectItem
+            label="Global Model Override"
+            options={["Auto-Routing (Smart)", "claude-3-5-sonnet-20241022", "gpt-4o", "gemini-1.5-pro", "qwen2.5:7b"]}
+            description="Force a specific model for all tasks (TUI & Web). Auto uses local for fast tasks, cloud for complex."
           />
           <ToggleItem label="Hinglish Support" description="Enable natural Hindi+English mixed responses." defaultChecked />
           <ToggleItem label="Telegram Integration" description="Relay alerts and chat to Telegram bot." defaultChecked />
@@ -104,7 +101,7 @@ export default function Settings() {
   );
 }
 
-function SettingsGroup({ icon, title, children }: { icon: any, title: string, children: React.ReactNode }) {
+function SettingsGroup({ icon, title, children }: { icon: React.ReactNode, title: string, children: React.ReactNode }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 px-1">
@@ -152,7 +149,7 @@ function InputItem({ label, placeholder, type = "text", description }: { label: 
   return (
     <div className="space-y-2.5">
       <p className="text-sm font-semibold text-zinc-200">{label}</p>
-      <input 
+      <input
         type={type}
         placeholder={placeholder}
         className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-300 outline-none focus:border-cyan-500/50 transition-all font-medium placeholder:text-zinc-600"

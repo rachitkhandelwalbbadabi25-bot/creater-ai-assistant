@@ -19,7 +19,7 @@ import {
 const log = createLogger("tools/computer");
 
 // ─── Retry policy for computer actions ───────────────────────────────────────
-const COMPUTER_POLICY = { maxAttempts: 2, baseDelayMs: 300, timeoutMs: 10000 };
+const COMPUTER_POLICY = { maxAttempts: 2, baseDelayMs: 300, timeoutMs: 30000 };
 
 // ─── Internal helper delegating to browserSessionManager ───────────────────────
 async function withComputerAction<T>(
@@ -58,13 +58,6 @@ async function withComputerAction<T>(
   const msg = res.error ?? `${operationName} failed`;
   log.error(`${operationName} failed`, { error: msg });
   return `${operationName} failed: ${msg}`;
-}
-
-// ─── Open URL in default browser ─────────────────────────────────────────────
-
-async function openUrlInBrowser(url: string): Promise<void> {
-  console.log("[LAUNCH TRACE]", "src/tools/laptop/computer.ts", "openUrlInBrowser", url);
-  await openUrl(url);
 }
 
 // ─── Browser Management ───────────────────────────────────────────────────────
@@ -222,21 +215,150 @@ export async function waitForElement(selector: string, timeout: number = 5000): 
 
 // ─── YouTube Specific ─────────────────────────────────────────────────────────
 
+interface ResolvedYouTubeVideo {
+  url: string;
+  title: string;
+}
+
+async function resolveYouTubeVideoViaFetch(query: string): Promise<ResolvedYouTubeVideo | null> {
+  try {
+    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+
+    const res = await fetch(searchUrl, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+    });
+    clearTimeout(timer);
+
+    if (!res.ok) return null;
+    const html = await res.text();
+
+    // 1. Try extracting structured video data from ytInitialData
+    const jsonMatch = html.match(/var ytInitialData\s*=\s*(\{[\s\S]*?\});<\/script>/);
+    if (jsonMatch && jsonMatch[1]) {
+      try {
+        const data = JSON.parse(jsonMatch[1]);
+        const sections =
+          data.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents;
+        if (Array.isArray(sections)) {
+          for (const section of sections) {
+            const items = section.itemSectionRenderer?.contents;
+            if (Array.isArray(items)) {
+              for (const item of items) {
+                const vr = item.videoRenderer;
+                if (vr && vr.videoId) {
+                  const title =
+                    vr.title?.runs?.map((r: { text?: string }) => r.text || "").join("") ||
+                    vr.title?.simpleText ||
+                    "";
+                  return {
+                    url: `https://www.youtube.com/watch?v=${vr.videoId}`,
+                    title: title.trim(),
+                  };
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        /* fallback to regex parsing */
+      }
+    }
+
+    // 2. Fallback to direct regex search on watch links inside the raw HTML
+    const videoIdMatch = html.match(/\/watch\?v=([a-zA-Z0-9_-]{11})/);
+    if (videoIdMatch && videoIdMatch[1]) {
+      return {
+        url: `https://www.youtube.com/watch?v=${videoIdMatch[1]}`,
+        title: query,
+      };
+    }
+  } catch {
+    /* ignore and fall through to Playwright or search URL fallback */
+  }
+  return null;
+}
+
+async function postYouTubeCommentIfRequested(
+  comment: string | undefined,
+  videoTitle: string,
+  approved?: boolean
+): Promise<string> {
+  const cleanComment = comment?.trim();
+  if (!cleanComment) return "";
+
+  if (approved === false) {
+    return ` (comment "${cleanComment}" cancelled: User rejected YouTube comment publication)`;
+  }
+
+  try {
+    // Allow Chrome tab to finish loading the YouTube watch page DOM before scrolling to #comments
+    await new Promise((r) => setTimeout(r, 3400));
+    const { commentOnYouTubeDesktop } = await import("./desktopControl.js");
+    const siteHint = videoTitle && videoTitle.length >= 4 ? videoTitle.slice(0, 24) : "YouTube";
+    const commentRes = await commentOnYouTubeDesktop(cleanComment, siteHint, "chrome", { approved });
+
+    if (commentRes?.status === "AWAITING_APPROVAL") {
+      return ` (composed comment "${cleanComment}" — AWAITING_APPROVAL before publishing)`;
+    }
+    if (commentRes?.status === "SUCCESS" && commentRes?.verified === true) {
+      return ` and commented "${cleanComment}"`;
+    }
+    if (commentRes?.status === "PARTIAL_SUCCESS") {
+      log.warn("[YOUTUBE_COMMENT] Comment submitted, but post-publish thread verification was not confirmed", {
+        error: commentRes?.error,
+      });
+      return ` (submitted comment "${cleanComment}" — PARTIAL_SUCCESS: post-publish thread verification unconfirmed)`;
+    }
+    log.warn("[YOUTUBE_COMMENT] Auto-comment did not complete", { error: commentRes?.error });
+    return ` (could not auto-post comment "${cleanComment}": ${commentRes?.error || "comment box not ready"})`;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn("[YOUTUBE_COMMENT] Auto-comment failed", { error: msg });
+    return ` (could not auto-post comment "${cleanComment}": ${msg})`;
+  }
+}
+
 export async function playYouTube(
   query: string,
   action: "play" | "search" = "play",
-  selection: "first" = "first"
+  selection: "first" = "first",
+  comment?: string,
+  approved?: boolean
 ): Promise<string> {
   const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
-  console.log("[LAUNCH TRACE]", "src/tools/laptop/computer.ts", "playYouTube", { query, action, selection, searchUrl });
+  console.log("[LAUNCH TRACE]", "src/tools/laptop/computer.ts", "playYouTube", {
+    query,
+    action,
+    selection,
+    comment,
+    approved,
+    searchUrl,
+  });
 
   if (action === "search" || !query.trim()) {
     await openUrl(searchUrl);
     return `Searched YouTube for "${query}".`;
   }
 
-  // Action is "play": Use Playwright to find the first actual video watch link
-  return withComputerAction("computer.playYouTube", async (page) => {
+  // 1. Ultra-fast path: resolve the watch link directly in ~300ms without spinning up headless Chromium
+  const fastVideo = await resolveYouTubeVideoViaFetch(query);
+  if (fastVideo && fastVideo.url) {
+    log.info(`[YOUTUBE_PLAY] Fast-resolved video watch URL: ${fastVideo.url} (${fastVideo.title})`);
+    await openUrl(fastVideo.url);
+    const videoTitle = fastVideo.title && fastVideo.title.length > 0 ? fastVideo.title : `first ${query} video`;
+    const commentSuffix = await postYouTubeCommentIfRequested(comment, videoTitle, approved);
+    return `Playing "${videoTitle}" on YouTube${commentSuffix}.`;
+  }
+
+  // 2. Playwright fallback: Use Playwright to find the watch link if lightweight fetch failed
+  const playwrightResult = await withComputerAction("computer.playYouTube", async (page) => {
     log.info(`[YOUTUBE_PLAY] Opening search results page for "${query}" (action: ${action}, selection: ${selection}): ${searchUrl}`);
     await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
 
@@ -269,22 +391,22 @@ export async function playYouTube(
 
     log.info(`[YOUTUBE_PLAY] Found video watch URL: ${videoData.url} (${videoData.title})`);
 
-    // Navigate Playwright session to the watch URL
-    await page.goto(videoData.url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    const currentUrl = page.url();
-
-    // Mandatory Validation: ensure navigation reached a YouTube watch page
-    const isValidWatchPage = currentUrl.includes("/watch?") || currentUrl.includes("/watch/") || currentUrl.includes("watch?v=");
-    if (!isValidWatchPage) {
-      throw new Error(`Navigation failed to reach YouTube video watch page (current URL: ${currentUrl}).`);
-    }
-
-    // Launch default system browser to the watch URL so the user can watch/listen
+    // Launch Chrome directly to the watch URL so user can watch & listen cleanly
     await openUrl(videoData.url);
 
     const videoTitle = videoData.title && videoData.title.length > 0 ? videoData.title : `first ${query} video`;
-    return `Opened video "${videoTitle}" on YouTube.`;
+    const commentSuffix = await postYouTubeCommentIfRequested(comment, videoTitle, approved);
+    return `Playing "${videoTitle}" on YouTube${commentSuffix}.`;
   });
+
+  // 3. Graceful fallback: If Playwright resolution failed or timed out, open the search URL in the browser
+  if (typeof playwrightResult === "string" && playwrightResult.includes("failed:")) {
+    log.warn("[YOUTUBE_PLAY] Playwright resolution failed, opening search page directly", { result: playwrightResult });
+    await openUrl(searchUrl);
+    return `Searched YouTube for "${query}".`;
+  }
+
+  return playwrightResult;
 }
 
 

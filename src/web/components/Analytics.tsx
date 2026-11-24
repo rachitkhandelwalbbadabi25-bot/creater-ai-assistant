@@ -2,8 +2,6 @@
 
 import React, { useEffect, useState } from "react";
 import { 
-  LineChart, 
-  BarChart, 
   Activity, 
   TrendingUp, 
   Calendar,
@@ -12,7 +10,7 @@ import {
   Frown,
   Meh
 } from "lucide-react";
-import { getAnalyticsAction } from "@/app/actions";
+import { getAnalyticsAction, type ActivityLogRow, type MoodLogRow } from "@/app/actions";
 import { cn } from "@/lib/utils";
 import {
   Chart as ChartJS,
@@ -26,7 +24,12 @@ import {
   Legend,
   Filler
 } from 'chart.js';
-import { Line, Bar } from 'react-chartjs-2';
+import { Bar } from 'react-chartjs-2';
+
+interface AnalyticsData {
+  moods: MoodLogRow[];
+  activity: ActivityLogRow[];
+}
 
 ChartJS.register(
   CategoryScale,
@@ -41,13 +44,13 @@ ChartJS.register(
 );
 
 export default function Analytics() {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<AnalyticsData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       const res = await getAnalyticsAction();
-      if (res.success) setData(res.data);
+      if (res.success && res.data) setData(res.data);
       setIsLoading(false);
     };
     fetchData();
@@ -56,11 +59,11 @@ export default function Analytics() {
   if (isLoading) return <div className="p-8 text-zinc-500 animate-pulse font-bold uppercase tracking-widest text-xs">Loading Analytics...</div>;
 
   const activityData = {
-    labels: data?.activity?.map((a: any) => a.date.split('-').slice(1).join('/')) || [],
+    labels: data?.activity?.map((a) => a.date.split('-').slice(1).join('/')) || [],
     datasets: [
       {
         label: 'Messages',
-        data: data?.activity?.map((a: any) => a.count) || [],
+        data: data?.activity?.map((a) => a.count) || [],
         backgroundColor: 'rgba(6, 182, 212, 0.2)',
         borderColor: '#06b6d4',
         borderWidth: 2,
@@ -76,7 +79,7 @@ export default function Analytics() {
     },
     scales: {
       y: { display: false, beginAtZero: true },
-      x: { grid: { display: false }, ticks: { color: '#52525b', font: { size: 10, weight: 'bold' } as any } }
+      x: { grid: { display: false }, ticks: { color: '#52525b', font: { size: 10, weight: 'bold' as const } } }
     },
   };
 
@@ -135,9 +138,9 @@ export default function Analytics() {
             </h3>
           </div>
           <div className="flex flex-col justify-center h-64 space-y-4">
-            <MoodRow label="Happy" count={data?.moods?.filter((m: any) => m.mood === 'Happy').length || 0} total={data?.moods?.length || 1} color="bg-emerald-500" icon={<Smile className="text-emerald-500" size={16} />} />
-            <MoodRow label="Neutral" count={data?.moods?.filter((m: any) => m.mood === 'Neutral').length || 0} total={data?.moods?.length || 1} color="bg-cyan-500" icon={<Meh className="text-cyan-500" size={16} />} />
-            <MoodRow label="Frustrated" count={data?.moods?.filter((m: any) => m.mood === 'Frustrated').length || 0} total={data?.moods?.length || 1} color="bg-rose-500" icon={<Frown className="text-rose-500" size={16} />} />
+            <MoodRow label="Happy" count={data?.moods?.filter((m) => m.mood === 'Happy').length || 0} total={data?.moods?.length || 1} color="bg-emerald-500" icon={<Smile className="text-emerald-500" size={16} />} />
+            <MoodRow label="Neutral" count={data?.moods?.filter((m) => m.mood === 'Neutral').length || 0} total={data?.moods?.length || 1} color="bg-cyan-500" icon={<Meh className="text-cyan-500" size={16} />} />
+            <MoodRow label="Frustrated" count={data?.moods?.filter((m) => m.mood === 'Frustrated').length || 0} total={data?.moods?.length || 1} color="bg-rose-500" icon={<Frown className="text-rose-500" size={16} />} />
           </div>
         </div>
       </div>
@@ -145,7 +148,7 @@ export default function Analytics() {
   );
 }
 
-function StatCard({ icon, label, value, subtext }: { icon: any, label: string, value: string | number, subtext: string }) {
+function StatCard({ icon, label, value, subtext }: { icon: React.ReactNode, label: string, value: string | number, subtext: string }) {
   return (
     <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6 hover:border-zinc-700 transition-all">
       <div className="p-2 bg-zinc-800 w-fit rounded-xl mb-4">{icon}</div>
@@ -156,7 +159,7 @@ function StatCard({ icon, label, value, subtext }: { icon: any, label: string, v
   );
 }
 
-function MoodRow({ label, count, total, color, icon }: { label: string, count: number, total: number, color: string, icon: any }) {
+function MoodRow({ label, count, total, color, icon }: { label: string, count: number, total: number, color: string, icon: React.ReactNode }) {
   const percent = Math.round((count / total) * 100);
   return (
     <div className="space-y-1.5">

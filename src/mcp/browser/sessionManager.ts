@@ -1,10 +1,10 @@
 // BrowserSessionManager – authoritative browser tab and session lifecycle manager
-import { newContext, newPage, closeBrowser } from './browserClient.js';
+import { newContext, newPage, closeBrowser, isCDPConnected } from './browserClient.js';
 import { Page, BrowserContext } from 'playwright';
 import { v4 as uuidv4 } from 'uuid';
 
 class BrowserSessionManager {
-  private tabs: Map<string, { context: BrowserContext; page: Page }> = new Map();
+  private tabs: Map<string, { context: BrowserContext; page: Page; isCDP?: boolean; keepOpen?: boolean }> = new Map();
   private idleTimer: NodeJS.Timeout | null = null;
   private readonly IDLE_TIMEOUT_MS = Number(process.env.PLAYWRIGHT_IDLE_TIMEOUT_MS) || 5 * 60 * 1000;
 
@@ -16,14 +16,19 @@ class BrowserSessionManager {
     }, this.IDLE_TIMEOUT_MS);
   }
 
-  async openTab(): Promise<string> {
+  async openTab(options?: { preferCDP?: boolean; keepOpen?: boolean }): Promise<string> {
     console.log('[OPEN_TAB_START]');
     this.resetIdleTimer();
-    const context = await newContext();
+    const context = await newContext(options);
     const page = await newPage(context);
+    const isCDP = isCDPConnected();
+    const keepOpen = options?.keepOpen ?? isCDP;
+    if (isCDP) {
+      await page.bringToFront().catch(() => {});
+    }
     const tabId = uuidv4();
-    this.tabs.set(tabId, { context, page });
-    console.log('[OPEN_TAB_RETURN]', { tabId });
+    this.tabs.set(tabId, { context, page, isCDP, keepOpen });
+    console.log('[OPEN_TAB_RETURN]', { tabId, isCDP, keepOpen });
     return tabId;
   }
 
@@ -38,8 +43,9 @@ class BrowserSessionManager {
     console.log(`[PAGE_GOTO] ${url}`);
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-    } catch (err: any) {
-      console.log(`[PAGE_GOTO_WARNING] domcontentloaded timed out or redirected: ${err.message}. Proceeding to DOM evaluation.`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`[PAGE_GOTO_WARNING] domcontentloaded timed out or redirected: ${msg}. Proceeding to DOM evaluation.`);
     }
   }
 
@@ -97,12 +103,18 @@ class BrowserSessionManager {
     return entry?.page;
   }
 
-  async closeTab(tabId: string): Promise<void> {
+  async closeTab(tabId: string, force = false): Promise<void> {
     const entry = this.tabs.get(tabId);
     if (!entry) return;
+    if (entry.keepOpen && !force) {
+      this.tabs.delete(tabId);
+      return;
+    }
     try {
       await entry.page.close();
-      await entry.context.close();
+      if (!entry.isCDP) {
+        await entry.context.close();
+      }
     } catch {
       // ignore cleanup errors
     }

@@ -20,7 +20,7 @@ export async function POST(req: Request) {
             controller.enqueue(new TextEncoder().encode(text));
           });
           controller.close();
-        } catch (error: any) {
+        } catch (error: unknown) {
           console.error("Streaming error:", error);
           controller.error(error);
         }
@@ -34,8 +34,9 @@ export async function POST(req: Request) {
         "Connection": "keep-alive",
       },
     });
-  } catch (error: any) {
-    return new Response(JSON.stringify({ error: error.message }), {
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return new Response(JSON.stringify({ error: errorMessage }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });

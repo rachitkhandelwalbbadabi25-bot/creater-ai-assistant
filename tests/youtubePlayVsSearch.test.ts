@@ -86,5 +86,28 @@ describe("Phase 1 — YouTube PLAY vs SEARCH Command Routing Tests", () => {
     expect(parseYouTubeCommand("search Hustle 5 videos")).toEqual({ action: "search", query: "Hustle 5" });
     expect(parseYouTubeCommand("show me CarryMinati videos")).toEqual({ action: "search", query: "CarryMinati" });
     expect(parseYouTubeCommand("YouTube search for CarryMinati")).toEqual({ action: "search", query: "CarryMinati" });
+    const res6 = parseYouTubeCommand("open youtube and play new song of mc square");
+    expect(res6).toEqual({
+      action: "play",
+      query: "new song of mc square",
+      selection: "first",
+    });
+
+    const res7 = parseYouTubeCommand("ok now can you open youtube and play the latest video od carryminati now");
+    expect(res7).toEqual({
+      action: "play",
+      query: "the latest video od carryminati",
+      selection: "first",
+    });
+
+    const res8 = parseYouTubeCommand(
+      'open youtube and play new video of samay raina and comment "hello" on thier video now'
+    );
+    expect(res8).toEqual({
+      action: "play",
+      query: "new video of samay raina",
+      selection: "first",
+      comment: "hello",
+    });
   });
 });

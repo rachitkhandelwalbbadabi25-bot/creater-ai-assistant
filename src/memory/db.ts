@@ -31,7 +31,9 @@ const log = createLogger("memory/db");
 
 // ─── globalThis keys ──────────────────────────────────────────────────────────
 declare global {
+  // eslint-disable-next-line no-var
   var __dbInstance: InstanceType<typeof Database> | undefined;
+  // eslint-disable-next-line no-var
   var __dbMigrationsRun: boolean | undefined;
 }
 

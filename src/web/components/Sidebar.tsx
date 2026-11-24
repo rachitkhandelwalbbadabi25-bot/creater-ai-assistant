@@ -6,7 +6,6 @@ import {
   Cpu, 
   Database, 
   Heart, 
-  LayoutDashboard, 
   MessageSquare, 
   Settings, 
   Zap,
@@ -15,13 +14,24 @@ import {
 import { getStatusAction } from "@/app/actions";
 import { cn } from "@/lib/utils";
 
+interface SidebarMetrics {
+  system?: {
+    cpu?: { usage?: number } | null;
+    ram?: { usagePercent?: number } | null;
+    battery?: { percent?: number } | null;
+  };
+  stats?: {
+    lastMood?: string | null;
+  };
+}
+
 export default function Sidebar({ activeTab, setActiveTab }: { activeTab: string, setActiveTab: (t: string) => void }) {
-  const [metrics, setMetrics] = useState<any>(null);
+  const [metrics, setMetrics] = useState<SidebarMetrics | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
       const res = await getStatusAction();
-      if (res.success) setMetrics(res.data);
+      if (res.success && res.data) setMetrics(res.data);
     };
     fetchData();
     const timer = setInterval(fetchData, 10000);

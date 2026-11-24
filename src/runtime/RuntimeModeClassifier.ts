@@ -46,6 +46,7 @@ const PRECOMPILED_REGEX = {
     /\b(screenshots?|screenshort|screen\s*shot|capture\s+(?:the\s+)?screen|take\s+(?:a\s+)?ss|take\s+(?:a\s+)?screenshot)\b/i,
     /\b(what(?:'s|\s+is)\s+(?:currently\s+)?(?:open\s+on|open\s+in|on)\s+(?:my\s+)?screen|what\s+is\s+open|inspect\s+(?:the\s+|my\s+)?(?:active\s+)?window|inspect\s+(?:the\s+|my\s+)?screen|check\s+(?:my\s+)?screen|active\s+window|screen\s*pe\s*kya\s*(?:hai|chal\s*raha\s*hai))\b/i,
     /\b(click\s+(?:at|on)?\s*\d+|move\s+mouse\s+(?:to)?\s*\d+|type\s+.+)\b/i,
+    /\b(?:write|type|paste|put|save|add|insert|draft|compose|create|generate|explain|tell|describe|summarize|likh|likho|daal|dal)\b.*\b(?:in|into|on|to|bin|me|pe|par)\s+(?:the\s+)?(?:notepad\+\+|npp|notepad|word\s*pad|wordpad|ms\s*word|microsoft\s*word|winword|word|vscode|vs\s*code|visual\s*studio\s*code|sticky\s*notes?|obsidian|notion|sublime(?:\s*text)?)\b/i,
     /\b(list|show)\s+(?:all\s+)?mcp\s+servers?\b/i,
     /\b(message|send\s+message|dm|text)\s+.+\s+(on|in|to)\b/i,
     /^(?:volume\b|awaz\b|awaaz\b|mute\b|unmute\b|toggle\s*mute|increase\s*(?:the\s*)?volume|decrease\s*(?:the\s*)?volume|lower\s*(?:the\s*)?volume|raise\s*(?:the\s*)?volume|turn\s*(?:up|down)\s*(?:the\s*)?volume)/i,
@@ -81,10 +82,7 @@ const PRECOMPILED_REGEX = {
   ],
   screenshot: /screenshot|screenshort|screen\s+shot|capture\s+screen|take\s+screenshot|take\s+a\s+screenshot|ss/i,
   webNavigationIntent: /\b(youtube|browser|google|search|website|url|music)\b/i,
-  appLaunchIntent: /\b(notepad|calculator|calc|chrome|edge|firefox|vscode|settings)\b/i,
-  hybridAnd: /\band\b/i,
-  hybridExecution: /(\bopen\b|\blaunch\b|\bplay\b|\bsearch\b|\bgoogle\b)/i,
-  hybridMixed: /(\bsearch\b|\bgoogle\b|\bexplain\b|\bcompare\b|\bfind\b|\bteach\b|\bsummarize\b)/i,
+  appLaunchIntent: /\b(notepad\+\+|notepad|wordpad|word|calculator|calc|chrome|edge|firefox|vscode|vs\s*code|obsidian|notion|sublime|settings)\b/i,
   semanticSearchIndicators: /\b(google|search|find information|look up|lookup)\b/i,
   openVerbPrefix: /^(open|open up|launch|start|run|go to|take me to|show me|display|bring up|locate|find)\s+/i,
 };
@@ -95,14 +93,6 @@ export function isExecutionRuntimeMode(mode: RuntimeMode): boolean {
 
 export function isConversationalRuntimeMode(mode: RuntimeMode): boolean {
   return mode === "conversational" || mode === "reasoning" || mode === "retrieval";
-}
-
-function isHybridExecutionRequest(normalizedInput: string): boolean {
-  return (
-    PRECOMPILED_REGEX.hybridAnd.test(normalizedInput) &&
-    PRECOMPILED_REGEX.hybridExecution.test(normalizedInput) &&
-    PRECOMPILED_REGEX.hybridMixed.test(normalizedInput)
-  );
 }
 
 function detectDeterministicSearchIntent(normalizedInput: string): RuntimeModeClassification | null {
@@ -181,7 +171,7 @@ const CONVERSATIONAL_SELF_PATTERNS = [
   /\btalk to me\b/i,
 ];
 
-function isExternalTemporalInfoRequest(normalizedInput: string, rawInput: string): boolean {
+function isExternalTemporalInfoRequest(normalizedInput: string): boolean {
   const inputLower = normalizedInput.toLowerCase();
 
   // 1. Direct conversational self/assistant patterns are NEVER temporal external info requests
@@ -223,7 +213,7 @@ function detectSemanticFactualIntent(normalizedInput: string, rawInput: string =
   const extraction = extractQuery(normalizedInput);
 
   if (isTimeSensitive) {
-    if (isExternalTemporalInfoRequest(normalizedInput, rawInput)) {
+    if (isExternalTemporalInfoRequest(normalizedInput)) {
       return {
         mode: "execution",
         normalizedInput,
@@ -288,7 +278,8 @@ function detectExecutionIntent(normalizedInput: string, rawInput: string = norma
       fastCommand.kind === "volume" ||
       fastCommand.kind === "reminder" ||
       fastCommand.kind === "social_message" ||
-      fastCommand.kind === "browser_act"
+      fastCommand.kind === "browser_act" ||
+      fastCommand.kind === "app_compose"
     ) {
       executionSource = "system-command";
     }
@@ -393,12 +384,6 @@ export function classifyRuntimeMode(input: string): RuntimeModeClassification {
   const hasReasoning = PRECOMPILED_REGEX.reasoningKeywords.some((pattern) => pattern.test(normalizedInput));
   const hasOrchestration = PRECOMPILED_REGEX.orchestrationKeywords.some((pattern) => pattern.test(normalizedInput));
   const hasConversational = PRECOMPILED_REGEX.conversationalKeywords.some((pattern) => pattern.test(normalizedInput));
-  const detectedModes: RuntimeMode[] = [
-    ...(hasRetrieval ? ["retrieval" as const] : []),
-    ...(hasReasoning ? ["reasoning" as const] : []),
-    ...(hasOrchestration ? ["orchestration" as const] : []),
-    ...(hasConversational ? ["conversational" as const] : []),
-  ];
 
   if (hasRetrieval) {
     const result: RuntimeModeClassification = {

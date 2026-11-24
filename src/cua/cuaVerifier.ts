@@ -19,13 +19,19 @@ export type VerificationMethod =
   | "element_absent"
   | "text_present"
   | "text_absent"
-  | "visual_change";
+  | "visual_change"
+  | "desktop_window_match"
+  | "desktop_text_present"
+  | "file_exists";
 
 export interface ExpectedOutcome {
   type: VerificationMethod;
   target?: string | RegExp;
   selector?: string;
   text?: string;
+  filePath?: string;
+  windowHint?: string;
+  siteHint?: string;
   baselineScreenshotPath?: string;
   timeoutMs?: number;
 }
@@ -268,19 +274,126 @@ export async function verifyCuaAction(
         };
       }
 
+      // 8. Desktop Window Title Match Verification
+      case "desktop_window_match": {
+        const expectedPattern = outcome.target;
+        if (!expectedPattern) {
+          return createUnavailableResult(outcome.type, "Expected window title pattern", "Missing target", timestamp);
+        }
+        const { getActiveDesktopWindow, focusDesktopWindow } = await import("../tools/laptop/desktopControl.js");
+        let observedTitle = "";
+        if (outcome.windowHint) {
+          const focused = await focusDesktopWindow(outcome.windowHint, outcome.siteHint);
+          observedTitle = focused.title || "";
+        } else {
+          const active = await getActiveDesktopWindow();
+          observedTitle = active.title || "";
+        }
+        const matches = checkPatternMatch(observedTitle, expectedPattern);
+        return {
+          status: matches ? "VERIFIED" : "NOT_VERIFIED",
+          success: matches,
+          method: "desktop_window_match",
+          confidence: 1.0,
+          expected: String(expectedPattern),
+          observed: observedTitle,
+          reason: matches
+            ? `Desktop window title matched '${expectedPattern}'`
+            : `Desktop window title mismatch: expected '${expectedPattern}', observed '${observedTitle}'`,
+          timestamp,
+        };
+      }
+
+      // 9. Desktop Surface Text Presence Verification (UIA + WinRT OCR)
+      case "desktop_text_present": {
+        const targetText = outcome.text;
+        if (!targetText) {
+          return createUnavailableResult(outcome.type, "Expected text on desktop surface", "Missing text", timestamp);
+        }
+        const { inspectDesktopBrowserSurface } = await import("../tools/laptop/desktopControl.js");
+        const surface = await inspectDesktopBrowserSurface(outcome.windowHint || "chrome", outcome.siteHint);
+        const combinedText = [
+          surface.title || "",
+          ...(surface.elements || []).map((e) => `${e.name || ""} ${e.text || ""}`),
+        ]
+          .join(" ")
+          .toLowerCase();
+        const found = combinedText.includes(targetText.toLowerCase());
+        return {
+          status: found ? "VERIFIED" : "NOT_VERIFIED",
+          success: found,
+          method: "desktop_text_present",
+          confidence: 0.95,
+          expected: `Desktop surface contains "${targetText}"`,
+          observed: found ? `Found "${targetText}" on surface '${surface.title || ""}'` : `Not found on '${surface.title || ""}'`,
+          reason: found
+            ? `Verified "${targetText}" present on desktop surface via UIA/OCR.`
+            : `Could not find "${targetText}" on desktop surface.`,
+          timestamp,
+        };
+      }
+
+      // 10. Local File Existence & Content Verification
+      case "file_exists": {
+        const filePath = outcome.filePath || (typeof outcome.target === "string" ? outcome.target : "");
+        if (!filePath) {
+          return createUnavailableResult(outcome.type, "Valid filePath specified", "Missing filePath", timestamp);
+        }
+        const exists = fs.existsSync(filePath);
+        if (!exists) {
+          return {
+            status: "NOT_VERIFIED",
+            success: false,
+            method: "file_exists",
+            confidence: 1.0,
+            expected: `File exists at '${filePath}'`,
+            observed: "File does not exist",
+            reason: `File '${filePath}' was not found on disk.`,
+            timestamp,
+          };
+        }
+        if (outcome.text) {
+          const content = fs.readFileSync(filePath, "utf8");
+          const hasText = content.includes(outcome.text);
+          return {
+            status: hasText ? "VERIFIED" : "NOT_VERIFIED",
+            success: hasText,
+            method: "file_exists",
+            confidence: 1.0,
+            expected: `File '${filePath}' contains "${outcome.text}"`,
+            observed: hasText ? `File exists (${content.length} chars) and contains expected text` : `File exists (${content.length} chars) but text missing`,
+            reason: hasText
+              ? `Verified file '${filePath}' exists and contains expected content.`
+              : `File '${filePath}' exists but did not match expected content.`,
+            timestamp,
+          };
+        }
+        return {
+          status: "VERIFIED",
+          success: true,
+          method: "file_exists",
+          confidence: 1.0,
+          expected: `File exists at '${filePath}'`,
+          observed: `File exists at '${filePath}'`,
+          reason: `Verified file '${filePath}' exists on disk.`,
+          timestamp,
+        };
+      }
+
       default:
         return createUnavailableResult(outcome.type, "Supported verification method", `Unknown method: ${outcome.type}`, timestamp);
     }
-  } catch (err: any) {
-    log.error(`Verification execution failed for method '${outcome.type}'`, { error: err.message });
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    log.error(`Verification execution failed for method '${outcome.type}'`, { error: errMsg });
     return {
       status: "VERIFICATION_UNAVAILABLE",
       success: false,
       method: outcome.type,
       confidence: 0,
       expected: "Successful page verification inspection",
-      observed: `Error: ${err.message}`,
-      reason: `Verification failed due to error: ${err.message}`,
+      observed: `Error: ${errMsg}`,
+      reason: `Verification failed due to error: ${errMsg}`,
       timestamp,
     };
   }

@@ -229,7 +229,7 @@ export interface MetricsCounters {
 }
 
 /** Snapshot of current metrics */
-export interface MetricsSnapshot extends MetricsCounters {}
+export type MetricsSnapshot = MetricsCounters;
 
 /** Generic cognitive event for observability */
 export interface CognitiveEvent {

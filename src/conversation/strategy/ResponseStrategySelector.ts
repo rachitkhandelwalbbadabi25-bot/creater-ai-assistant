@@ -3,7 +3,7 @@
 import { Intent, ResponseStrategy, PersonalityProfile } from "../types";
 
 /**
- * Very small deterministic selector for Phase 1.
+ * Very small deterministic selector for Phase 1.
  * It maps an Intent to a static response payload.
  * In later phases this could become a LLM‑driven planner.
  */

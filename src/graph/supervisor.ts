@@ -426,7 +426,7 @@ export async function processMessage(
       log.info('[REDISPATCH_LOOP]');
           const maxRedispatch = 10; // safeguard against infinite loops
           let redispatchCount = 0;
-          while (true) {
+          while (redispatchCount <= maxRedispatch) {
             const executedAgent = currentAgent;
             const agentFn = AGENTS[executedAgent] ?? taskAgentNode;
             log.info('[AGENT_DISPATCH]', { agent: executedAgent });
@@ -515,7 +515,7 @@ export async function processConfirmation(
       const { setWorkflowStatus, appendStepResult } = await import("../orchestrator/status.js");
       appendStepResult(taskId, { stepId: pendingToolId, status: "failed", error: String(error) });
       setWorkflowStatus(taskId, "failed");
-    } catch {}
+    } catch { /* non-fatal status update error */ }
     return formatErrorForUser(error);
   }
 }

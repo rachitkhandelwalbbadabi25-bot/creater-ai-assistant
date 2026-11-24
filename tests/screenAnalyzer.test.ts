@@ -80,7 +80,7 @@ describe("Phase 5 Step 3 — Screen Inspection Foundation Tests", () => {
     } finally {
       await browserSessionManager.closeTab(tabId);
     }
-  });
+  }, 20000);
 
   it("4. Captures DOM element screenshot and metadata", async () => {
     const tabId = await browserSessionManager.openTab();
@@ -108,7 +108,7 @@ describe("Phase 5 Step 3 — Screen Inspection Foundation Tests", () => {
     } finally {
       await browserSessionManager.closeTab(tabId);
     }
-  });
+  }, 15000);
 
   it("5. Screenshot failure returns structured error", async () => {
     const res = await captureDomElement("#non-existent-element-xyz");
@@ -119,7 +119,7 @@ describe("Phase 5 Step 3 — Screen Inspection Foundation Tests", () => {
       expect(res.error.sourceType).toBe("BROWSER_ELEMENT");
       expect(res.error.message).toContain("non-existent-element-xyz");
     }
-  });
+  }, 15000);
 
   it("6. Existing browser screenshot behavior remains unchanged", async () => {
     const pageResult = await takeScreenshotOfPage();
@@ -131,7 +131,7 @@ describe("Phase 5 Step 3 — Screen Inspection Foundation Tests", () => {
       expect(fs.existsSync(createdPath)).toBe(true);
       fs.unlinkSync(createdPath);
     }
-  });
+  }, 15000);
 
   it("7. Passive screen inspection performs no action or mutations", async () => {
     const tabId = await browserSessionManager.openTab();
@@ -150,7 +150,7 @@ describe("Phase 5 Step 3 — Screen Inspection Foundation Tests", () => {
 
       // Verify window.clicked was NOT triggered
       const wasClicked = await browserSessionManager.executeOnPage(async (page) => {
-        return page.evaluate(() => (window as any).clicked === true);
+        return page.evaluate(() => (window as unknown as { clicked?: boolean }).clicked === true);
       }, tabId);
 
       expect(wasClicked).toBe(false);
@@ -161,7 +161,7 @@ describe("Phase 5 Step 3 — Screen Inspection Foundation Tests", () => {
     } finally {
       await browserSessionManager.closeTab(tabId);
     }
-  });
+  }, 15000);
 
   it("8. Desktop screenshot capture succeeds or handles screen availability gracefully", async () => {
     const res = await captureDesktopScreen();

@@ -25,6 +25,13 @@ function cleanRef(ref: string): string {
 }
 
 /**
+ * Formats unknown error objects into string message
+ */
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
  * Clicks a target element by its semantic ref (@e1) or CSS selector.
  */
 export async function primitiveClick(page: Page, target: string): Promise<PrimitiveExecutionResult> {
@@ -47,7 +54,8 @@ export async function primitiveClick(page: Page, target: string): Promise<Primit
       target,
       details: `Clicked element [${target}].`,
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const errMessage = getErrorMessage(err);
     // Fallback: try direct text matching if ref lookup fails
     try {
       const textBtn = await page.waitForSelector(`text="${target}"`, { timeout: 1500 });
@@ -60,15 +68,17 @@ export async function primitiveClick(page: Page, target: string): Promise<Primit
           details: `Clicked element matching text "${target}".`,
         };
       }
-    } catch {}
+    } catch {
+      // Direct text lookup attempt failed; proceed to report error
+    }
 
-    log.warn(`[PRIMITIVE_CLICK_FAILED] target=${target}, error=${err.message}`);
+    log.warn(`[PRIMITIVE_CLICK_FAILED] target=${target}, error=${errMessage}`);
     return {
       success: false,
       action: "click",
       target,
-      details: `Failed to click ${target}: ${err.message}`,
-      error: err.message,
+      details: `Failed to click ${target}: ${errMessage}`,
+      error: errMessage,
     };
   }
 }
@@ -105,10 +115,13 @@ export async function primitiveType(
       await page.keyboard.type(text, { delay: 30 });
     } else {
       // Standard input or textarea
-      await (el as any).fill(text).catch(async () => {
-        await el.focus();
-        await page.keyboard.type(text, { delay: 30 });
-      });
+      const inputEl = await page.$(selector);
+      if (inputEl) {
+        await inputEl.fill(text).catch(async () => {
+          await inputEl.focus();
+          await page.keyboard.type(text, { delay: 30 });
+        });
+      }
     }
 
     if (pressEnter) {
@@ -123,14 +136,15 @@ export async function primitiveType(
       target,
       details: `Typed "${text}" into [${target}]${pressEnter ? " and pressed Enter" : ""}.`,
     };
-  } catch (err: any) {
-    log.warn(`[PRIMITIVE_TYPE_FAILED] target=${target}, error=${err.message}`);
+  } catch (err: unknown) {
+    const errMessage = getErrorMessage(err);
+    log.warn(`[PRIMITIVE_TYPE_FAILED] target=${target}, error=${errMessage}`);
     return {
       success: false,
       action: "type",
       target,
-      details: `Failed to type into ${target}: ${err.message}`,
-      error: err.message,
+      details: `Failed to type into ${target}: ${errMessage}`,
+      error: errMessage,
     };
   }
 }
@@ -148,14 +162,15 @@ export async function primitivePress(page: Page, key: string): Promise<Primitive
       target: key,
       details: `Pressed key [${key}].`,
     };
-  } catch (err: any) {
-    log.warn(`[PRIMITIVE_PRESS_FAILED] key=${key}, error=${err.message}`);
+  } catch (err: unknown) {
+    const errMessage = getErrorMessage(err);
+    log.warn(`[PRIMITIVE_PRESS_FAILED] key=${key}, error=${errMessage}`);
     return {
       success: false,
       action: "press",
       target: key,
-      details: `Failed to press key ${key}: ${err.message}`,
-      error: err.message,
+      details: `Failed to press key ${key}: ${errMessage}`,
+      error: errMessage,
     };
   }
 }
@@ -178,13 +193,14 @@ export async function primitiveScroll(
       action: "scroll",
       details: `Scrolled ${direction} by ${amount}px.`,
     };
-  } catch (err: any) {
-    log.warn(`[PRIMITIVE_SCROLL_FAILED] error=${err.message}`);
+  } catch (err: unknown) {
+    const errMessage = getErrorMessage(err);
+    log.warn(`[PRIMITIVE_SCROLL_FAILED] error=${errMessage}`);
     return {
       success: false,
       action: "scroll",
-      details: `Failed to scroll: ${err.message}`,
-      error: err.message,
+      details: `Failed to scroll: ${errMessage}`,
+      error: errMessage,
     };
   }
 }
@@ -207,15 +223,15 @@ export async function primitiveGoto(page: Page, url: string): Promise<PrimitiveE
       target: targetUrl,
       details: `Navigated to ${targetUrl}.`,
     };
-  } catch (err: any) {
-    log.warn(`[PRIMITIVE_GOTO_FAILED] url=${url}, error=${err.message}`);
+  } catch (err: unknown) {
+    const errMessage = getErrorMessage(err);
+    log.warn(`[PRIMITIVE_GOTO_FAILED] url=${url}, error=${errMessage}`);
     return {
       success: false,
       action: "goto",
       target: url,
-      details: `Failed to navigate to ${url}: ${err.message}`,
-      error: err.message,
+      details: `Failed to navigate to ${url}: ${errMessage}`,
+      error: errMessage,
     };
   }
 }
-

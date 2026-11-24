@@ -1,7 +1,7 @@
 // packages/convo/src/input/InputUnderstandingLayer.ts
 
 /**
- * InputUnderstandingLayer – Phase 1 placeholder.
+ * InputUnderstandingLayer – Phase 1 placeholder.
  * It normalises raw user text (trims whitespace, collapses spaces, lower‑cases).
  * In later phases it could perform language detection, profanity filtering, etc.
  */

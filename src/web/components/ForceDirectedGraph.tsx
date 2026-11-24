@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo } from "react";
 import { cn } from "@/lib/utils";
 
 interface Node {
@@ -24,33 +24,36 @@ interface Props {
   selectedNodeLabel: string | null;
 }
 
+function seededUnit(seed: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) / 4294967295;
+}
+
 export default function ForceDirectedGraph({ nodes, edges, onNodeClick, selectedNodeLabel }: Props) {
-  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
   const width = 800;
   const height = 600;
 
-  // Initialize random positions
-  useEffect(() => {
-    const initial: Record<string, { x: number; y: number }> = {};
-    nodes.forEach((n, i) => {
-      initial[n.id] = {
-        x: width / 2 + (Math.random() - 0.5) * 400,
-        y: height / 2 + (Math.random() - 0.5) * 300,
+  const positions = useMemo(() => {
+    let current: Record<string, { x: number; y: number }> = {};
+    nodes.forEach((n, idx) => {
+      const rx = seededUnit(`${n.id}:x:${idx}`);
+      const ry = seededUnit(`${n.id}:y:${idx}`);
+      current[n.id] = {
+        x: width / 2 + (rx - 0.5) * 400,
+        y: height / 2 + (ry - 0.5) * 300,
       };
     });
-    setPositions(initial);
-  }, [nodes]);
 
-  // Simple force simulation (one-time or limited steps for simplicity in this environment)
-  useEffect(() => {
-    if (Object.keys(positions).length === 0) return;
+    if (Object.keys(current).length === 0) return current;
 
-    let current = { ...positions };
     const steps = 50;
-    
     for (let s = 0; s < steps; s++) {
       const next: Record<string, { x: number; y: number }> = {};
-      
+
       nodes.forEach(n1 => {
         let fx = 0;
         let fy = 0;
@@ -62,7 +65,7 @@ export default function ForceDirectedGraph({ nodes, edges, onNodeClick, selected
           if (n1.id === n2.id) return;
           const p2 = current[n2.id];
           if (!p2) return;
-          
+
           const dx = p1.x - p2.x;
           const dy = p1.y - p2.y;
           const distSq = dx * dx + dy * dy + 0.1;
@@ -77,7 +80,7 @@ export default function ForceDirectedGraph({ nodes, edges, onNodeClick, selected
             const otherId = edge.source === n1.id ? edge.target : edge.source;
             const p2 = current[otherId];
             if (!p2) return;
-            
+
             const dx = p1.x - p2.x;
             const dy = p1.y - p2.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -98,7 +101,8 @@ export default function ForceDirectedGraph({ nodes, edges, onNodeClick, selected
       });
       current = next;
     }
-    setPositions(current);
+
+    return current;
   }, [nodes, edges]);
 
   return (

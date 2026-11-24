@@ -47,14 +47,36 @@ describe("Conversation Routing & Agent Architecture", () => {
   });
 
   test("5. Streaming pipeline delivers clean user-facing error when Ollama is unreachable without crashing", async () => {
-    let streamedTokens = "";
-    const result = await processMessageStreaming("kya haal chaal bhai", "web", (token) => {
-      streamedTokens += token;
-    });
+    const { spyOn } = await import("bun:test");
+    const ollamaMod = await import("../src/llm/ollama.js");
+    const modelsMod = await import("@config/models.js");
+    const ollamaSpy = spyOn(ollamaMod, "isOllamaAvailable").mockResolvedValue(false);
+    const providerKeys = ["gemini", "openai", "anthropic", "deepseek", "grok"] as const;
+    const savedDescriptors = providerKeys.map(
+      (k) => [k, Object.getOwnPropertyDescriptor(modelsMod.ProviderAvailability, k)] as const
+    );
+    for (const k of providerKeys) {
+      Object.defineProperty(modelsMod.ProviderAvailability, k, {
+        get: () => false,
+        configurable: true,
+      });
+    }
 
-    expect(result).toBeDefined();
-    expect(streamedTokens.length).toBeGreaterThan(0);
-    expect(result).toContain("AI se connect nahi ho pa raha");
+    try {
+      let streamedTokens = "";
+      const result = await processMessageStreaming("kya haal chaal bhai", "web", (token) => {
+        streamedTokens += token;
+      });
+
+      expect(result).toBeDefined();
+      expect(streamedTokens.length).toBeGreaterThan(0);
+      expect(result).toContain("AI se connect nahi ho pa raha");
+    } finally {
+      ollamaSpy.mockRestore();
+      for (const [k, desc] of savedDescriptors) {
+        if (desc) Object.defineProperty(modelsMod.ProviderAvailability, k, desc);
+      }
+    }
   });
 });
 

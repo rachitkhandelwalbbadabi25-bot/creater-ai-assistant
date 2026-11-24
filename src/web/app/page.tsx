@@ -1,38 +1,46 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useSyncExternalStore } from "react";
 import Sidebar from "@/components/Sidebar";
-import ChatInterface from "@/components/ChatInterface";
+import ChatInterface, { type ChatMessage } from "@/components/ChatInterface";
 import MemoryExplorer from "@/components/MemoryExplorer";
 import Analytics from "@/components/Analytics";
 import Settings from "@/components/Settings";
 
-const DEFAULT_MESSAGE = {
+const DEFAULT_MESSAGE: ChatMessage = {
   id: "welcome",
-  role: "assistant" as const,
+  role: "assistant",
   content: "👋 Hey! Main Creater hoon — tumhara personal AI assistant. Kuch bhi poocho!",
   timestamp: new Date().toISOString(),
 };
 
+const emptySubscribe = () => () => { };
+
 export default function Home() {
   const [activeTab, setActiveTab] = useState("Chat");
-  const [messages, setMessages] = useState<any[]>([DEFAULT_MESSAGE]);
-  const [mounted, setMounted] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([DEFAULT_MESSAGE]);
+  const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false);
 
-  // Synchronize from localStorage only after client-side mount to guarantee matching SSR HTML
+  // Synchronize from localStorage asynchronously after client mount to guarantee matching SSR HTML
   useEffect(() => {
-    setMounted(true);
-    try {
-      const saved = localStorage.getItem("creater_chat_history");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setMessages(parsed);
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      try {
+        const saved = localStorage.getItem("creater_chat_history");
+        if (saved) {
+          const parsed = JSON.parse(saved) as unknown;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setMessages(parsed as ChatMessage[]);
+          }
         }
+      } catch (err) {
+        console.error("Failed to load initial chat history:", err);
       }
-    } catch (err) {
-      console.error("Failed to load initial chat history:", err);
-    }
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Save to localStorage when messages change (debounced to avoid blocking during streaming)
@@ -52,7 +60,7 @@ export default function Home() {
     <main className="flex min-h-screen bg-zinc-950 text-zinc-200 selection:bg-cyan-500/30">
       {/* Sidebar with tab control */}
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
-      
+
       {/* Content Area */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
         {activeTab === "Chat" && <ChatInterface appName="Creater" messages={messages} setMessages={setMessages} />}

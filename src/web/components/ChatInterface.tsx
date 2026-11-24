@@ -1,21 +1,23 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo, useSyncExternalStore } from "react";
 import { Send, User, Bot, Sparkles, Loader2, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import dayjs from "dayjs";
 
-interface Message {
+export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: Date | string;
 }
 
-const DEFAULT_FALLBACK_MESSAGE: Message = {
+const DEFAULT_FALLBACK_MESSAGE: ChatMessage = {
   id: "welcome",
   role: "assistant",
   content: "👋 Hey! Main Creater hoon — tumhara personal AI assistant. Kuch bhi poocho!",
   timestamp: new Date().toISOString(),
 };
+
+const emptySubscribe = () => () => {};
 
 const generateUniqueId = () => `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
@@ -25,21 +27,17 @@ export default function ChatInterface({
   setMessages,
 }: {
   appName?: string;
-  messages: Message[];
-  setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+  messages: ChatMessage[];
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
 }) {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [isMounted, setIsMounted] = useState(false);
+  const isMounted = useSyncExternalStore(emptySubscribe, () => true, () => false);
   const [statusText, setStatusText] = useState("Thinking...");
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   
   const isSubmittingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
 
   const handleScroll = () => {
     if (!scrollRef.current) return;
@@ -50,7 +48,10 @@ export default function ChatInterface({
   };
 
   // Ensure message list is never empty/null/undefined during render transitions
-  const displayMessages = Array.isArray(messages) && messages.length > 0 ? messages : [DEFAULT_FALLBACK_MESSAGE];
+  const displayMessages = useMemo(
+    () => (Array.isArray(messages) && messages.length > 0 ? messages : [DEFAULT_FALLBACK_MESSAGE]),
+    [messages]
+  );
 
   // Scroll to bottom when messages or loading state changes (if auto-scroll is allowed)
   useEffect(() => {
@@ -72,7 +73,7 @@ export default function ChatInterface({
     if (!input.trim() || isLoading || isSubmittingRef.current) return;
     isSubmittingRef.current = true;
     
-    const userMsg: Message = {
+    const userMsg: ChatMessage = {
       id: generateUniqueId(),
       role: "user",
       content: input,
@@ -80,7 +81,7 @@ export default function ChatInterface({
     };
     
     const assistantId = generateUniqueId();
-    const assistantMsg: Message = {
+    const assistantMsg: ChatMessage = {
       id: assistantId,
       role: "assistant",
       content: "",

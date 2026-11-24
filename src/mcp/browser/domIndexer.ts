@@ -2,6 +2,7 @@
 // src/mcp/browser/domIndexer.ts — Dynamic DOM Interactive Element Indexer
 // Injects a high-speed scanner into any live webpage to index interactive elements
 // into semantic references (@e1, @e2...) like Manus AI & OpenHuman.
+// Includes TokenJuice semantic scoring and pruning for local CPU optimization.
 // ════════════════════════════════════════════════════════════════════════════════
 
 import { type Page } from "playwright";
@@ -16,6 +17,7 @@ export interface IndexedElement {
   value?: string;
   href?: string;
   isContentEditable?: boolean;
+  score?: number;
 }
 
 export interface DomSnapshot {
@@ -25,15 +27,108 @@ export interface DomSnapshot {
   formattedTree: string;
 }
 
+const NOISE_WORDS = new Set([
+  "skip to content",
+  "privacy",
+  "terms",
+  "cookie",
+  "cookies",
+  "testimonial",
+  "pause animation",
+  "pause activity",
+  "copyright",
+  "all rights reserved",
+  "subscribe",
+]);
+
+/**
+ * TokenJuice Semantic Scorer: Scores an element based on its relevance to the user's goal.
+ * Eliminates 90% of irrelevant DOM fluff to keep prompt size < 400 chars for local CPU inference.
+ */
+export function scoreElementForGoal(el: IndexedElement, goal: string): number {
+  if (!goal) return 1;
+
+  const lowerGoal = goal.toLowerCase();
+  const lowerName = el.name.toLowerCase();
+  const lowerPlaceholder = (el.placeholder || "").toLowerCase();
+  const lowerRole = el.role.toLowerCase();
+
+  // 1. Noise penalty for irrelevant site fluff
+  for (const noise of NOISE_WORDS) {
+    if (lowerName.includes(noise)) return -50;
+  }
+
+  let score = 0;
+
+  // 2. Search / Type / Compose intent detection
+  const isSearchOrTypeIntent = /\b(search|find|query|type|look|check|repo|product|message|dm|say|tell|send|write|chat|reply|wish)\b/i.test(lowerGoal);
+  const isSearchElement =
+    lowerRole === "textbox" ||
+    lowerRole === "searchbox" ||
+    el.tag === "input" ||
+    el.tag === "textarea" ||
+    el.isContentEditable ||
+    el.type === "search" ||
+    lowerName.includes("search") ||
+    lowerPlaceholder.includes("search");
+
+  const isComposeElement =
+    lowerName.includes("message") ||
+    lowerPlaceholder.includes("message") ||
+    lowerName.includes("write") ||
+    lowerPlaceholder.includes("write") ||
+    el.isContentEditable;
+
+  if (isSearchOrTypeIntent && isSearchElement) {
+    score += 30;
+  }
+  if (isSearchOrTypeIntent && isComposeElement) {
+    score += 30;
+  }
+
+  // 3. Click / Action / Send intent detection
+  const isClickIntent = /\b(click|star|follow|subscribe|submit|send|open|select|message|dm|say|tell|chat)\b/i.test(lowerGoal);
+  const isActionElement = el.tag === "button" || lowerRole === "button" || lowerRole === "link";
+  if (isClickIntent && isActionElement) {
+    score += 15;
+  }
+  if (isClickIntent && isActionElement && (lowerName === "send" || lowerName.includes("send"))) {
+    score += 25;
+  }
+
+  // 4. Goal keyword overlap matching
+  const goalKeywords = lowerGoal
+    .replace(/[^a-z0-9\s_-]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !["the", "and", "for", "with", "this", "that", "open", "from"].includes(w));
+
+  for (const kw of goalKeywords) {
+    if (lowerName.includes(kw)) score += 20;
+    if (lowerPlaceholder.includes(kw)) score += 20;
+    if (el.href && el.href.toLowerCase().includes(kw)) score += 10;
+  }
+
+  // Baseline priority for actionable inputs and buttons over plain links
+  if (el.tag === "input" || el.tag === "textarea" || el.isContentEditable) score += 5;
+  if (el.tag === "button" || lowerRole === "button") score += 3;
+
+  return score;
+}
+
 /**
  * Injects a fast in-page DOM scanner that assigns data-creater-ref="e{index}"
  * to visible interactive elements and returns a compact semantic representation.
+ * Uses TokenJuice semantic pruning when a goal is provided to keep prompt < 400 chars.
  */
-export async function indexInteractiveElements(page: Page, maxElements: number = 60): Promise<DomSnapshot> {
+export async function indexInteractiveElements(
+  page: Page,
+  goal?: string,
+  maxElements: number = 8
+): Promise<DomSnapshot> {
   const url = page.url();
   const title = await page.title().catch(() => "");
 
-  const rawElements: IndexedElement[] = await page.evaluate((maxCount) => {
+  const rawElements: IndexedElement[] = await page.evaluate(() => {
     // Interactive candidate selector
     const selector = [
       "button",
@@ -44,6 +139,7 @@ export async function indexInteractiveElements(page: Page, maxElements: number =
       "[role='button']",
       "[role='link']",
       "[role='textbox']",
+      "[role='searchbox']",
       "[role='checkbox']",
       "[role='menuitem']",
       "[role='tab']",
@@ -53,12 +149,10 @@ export async function indexInteractiveElements(page: Page, maxElements: number =
     ].join(", ");
 
     const candidates = Array.from(document.querySelectorAll(selector)) as HTMLElement[];
-    const results: any[] = [];
+    const results: IndexedElement[] = [];
     let count = 0;
 
     for (const el of candidates) {
-      if (count >= maxCount) break;
-
       // Check visibility & dimensions
       const rect = el.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) continue;
@@ -83,7 +177,6 @@ export async function indexInteractiveElements(page: Page, maxElements: number =
         .replace(/\s+/g, " ")
         .trim();
 
-      // Truncate long text to save LLM tokens
       if (name.length > 80) {
         name = name.slice(0, 77) + "...";
       }
@@ -108,10 +201,31 @@ export async function indexInteractiveElements(page: Page, maxElements: number =
     }
 
     return results;
-  }, maxElements).catch(() => []);
+  }).catch(() => []);
+
+  // TokenJuice Pruning: If a goal is provided, score elements and keep only top candidates
+  let prunedElements = rawElements;
+  if (goal && rawElements.length > 0) {
+    const scored = rawElements.map((el) => ({
+      ...el,
+      score: scoreElementForGoal(el, goal),
+    }));
+
+    // Filter out negative noise and sort by relevance
+    const valid = scored.filter((el) => (el.score ?? 0) >= 0);
+    valid.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+
+    prunedElements = valid.slice(0, maxElements);
+    // If scoring filtered too aggressively, fallback to first few elements
+    if (prunedElements.length === 0) {
+      prunedElements = rawElements.slice(0, maxElements);
+    }
+  } else {
+    prunedElements = rawElements.slice(0, maxElements);
+  }
 
   // Format compact element list for LLM context
-  const lines = rawElements.map((el) => {
+  const lines = prunedElements.map((el) => {
     const parts = [`[${el.ref}] (${el.role}) "${el.name}"`];
     if (el.placeholder && el.placeholder !== el.name) parts.push(`placeholder="${el.placeholder}"`);
     if (el.type) parts.push(`type="${el.type}"`);
@@ -125,8 +239,7 @@ export async function indexInteractiveElements(page: Page, maxElements: number =
   return {
     url,
     title,
-    elements: rawElements,
+    elements: prunedElements,
     formattedTree,
   };
 }
-

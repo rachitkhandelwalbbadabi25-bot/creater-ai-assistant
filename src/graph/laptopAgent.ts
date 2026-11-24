@@ -5,12 +5,12 @@
 import type { GraphState } from "./state.js";
 import { chat, type ChatMessage } from "@llm/client.js";
 import { SYSTEM_PROMPT, buildToolSelectionPrompt } from "@llm/prompts.js";
-import { GenerationPresets } from "@config/models.js";
+import { GenerationPresets, Models } from "@config/models.js";
 import { DEFAULT_NUM_CTX } from "@llm/constants.js";
 import { getNumPredict } from "@llm/tokenBudget.js";
 import { TOOL_REGISTRY, requiresConfirmation } from "@config/tools.js";
 import { env } from "@config/index.js";
-import { addMessage } from "@memory/shortTerm.js";
+import { addMessage, getChannelChatHistory } from "@memory/shortTerm.js";
 import { createLogger } from "@utils/logger.js";
 import { formatErrorForUser } from "@utils/errorHandler.js";
 import { openApp, openUrl, openFileOrPath, openUrlInBrowser } from "@tools/laptop/launcher.js";
@@ -115,7 +115,7 @@ async function executeDeterministicSearch(state: GraphState): Promise<string | n
     const provider = detectSearchProvider(state.currentInput);
     const query = cleanSearchQuery(state.currentInput);
     if (query) {
-      route = { provider, query, url: buildSearchUrl(provider as any, query) };
+      route = { provider, query, url: buildSearchUrl(provider, query) };
     }
   }
 
@@ -389,6 +389,151 @@ async function tryDirectLaunch(state: GraphState): Promise<string | null> {
   return null;
 }
 
+const LAUNCHABLE_WRITE_APPS = new Set([
+  "notepad",
+  "notepad++",
+  "word",
+  "wordpad",
+  "vscode",
+  "obsidian",
+  "notion",
+  "sublime",
+]);
+
+const SINGLE_DOC_NEW_TAB_APPS = new Set(["notepad", "wordpad", "word"]);
+
+function resolveWriteAppWindowHint(app: string): string {
+  switch (app) {
+    case "vscode":
+      return "Visual Studio Code";
+    case "word":
+      return "Word";
+    case "wordpad":
+      return "WordPad";
+    case "notepad":
+    case "notes":
+      return "Notepad";
+    case "notepad++":
+      return "Notepad++";
+    case "sticky notes":
+      return "Sticky Notes";
+    case "sublime":
+      return "Sublime Text";
+    case "obsidian":
+      return "Obsidian";
+    case "notion":
+      return "Notion";
+    default:
+      return app;
+  }
+}
+
+function isBlankEditorWindow(app: string, title?: string): boolean {
+  if (!title) return false;
+  const normalizedTitle = title.trim().toLowerCase();
+  if (app === "notepad" || app === "notes") {
+    const stripped = normalizedTitle.replace(/\s*-\s*notepad$/i, "").trim();
+    return stripped === "" || stripped === "notepad" || stripped === "untitled" || stripped === "*untitled";
+  }
+  return normalizedTitle.startsWith("document1") || normalizedTitle.startsWith("untitled");
+}
+
+function cleanGeneratedEditorText(rawText: string): string {
+  let cleaned = rawText.trim();
+  // Strip accidental single-line chat preamble before quoted/multiline content
+  cleaned = cleaned.replace(
+    /^(?:sure|okay|alright|here(?:'s| is))[^\n]{0,90}?(?:notepad|word|wordpad|vscode|obsidian|notion|write|response)[^:\n]*:\s*\n+/i,
+    ""
+  ).trim();
+  // Strip wrapping code fences or outer quotes around the entire note
+  const fencedMatch = cleaned.match(/^```(?:\w+)?\s*([\s\S]*?)\s*```$/);
+  if (fencedMatch && fencedMatch[1]) {
+    cleaned = fencedMatch[1].trim();
+  }
+  const outerQuoteMatch = cleaned.match(/^["“]([\s\S]+)["”]$/);
+  if (outerQuoteMatch && outerQuoteMatch[1]) {
+    cleaned = outerQuoteMatch[1].trim();
+  }
+  return cleaned;
+}
+
+async function generateContentForDesktopApp(prompt: string, state: GraphState, targetApp = "notepad"): Promise<string> {
+  const isCapabilityQuery =
+    /\b(what\s+(?:things\s+)?(?:can\s+you|you\s+can)\s+do|capabilities?|features?|skills?|apni\s+capabilit\w*|kya\s+(?:kya\s+)?kar\s+sakt\w*|tum\s+kya\s+kar)/i.test(
+      prompt
+    );
+
+  const capabilityContext = isCapabilityQuery
+    ? `\n\nCreater AI's verified live capabilities on this system:\n- Conversational assistance & reasoning in English, Hindi, and Hinglish\n- Persistent short-term & long-term memory (remembering and recalling facts)\n- Desktop app & UI control (open/close Chrome, Notepad, Word, WordPad, VS Code, Calculator; inspect active screen/windows; mouse clicks, writing/pasting directly into desktop editors; screenshots; volume control)\n- Live Chrome browser automation (open websites, search Google/YouTube/Internshala/GitHub/Amazon, play YouTube videos, LinkedIn & Instagram navigation and messaging)\n- File/folder access (Downloads, Documents, Desktop, local paths) & background reminders`
+    : "";
+
+  const appLabel = resolveWriteAppWindowHint(targetApp);
+  const formattingRule =
+    targetApp === "vscode" || targetApp === "notepad++" || targetApp === "sublime"
+      ? `Output clean plain text or source code ready to paste directly inside ${appLabel}. Avoid unnecessary conversational chatter.`
+      : `Use clean line breaks and '-' bullet points where helpful so it pastes cleanly inside ${appLabel}.`;
+
+  const systemContent =
+    `You are Creater AI, created by Rachit Khandelwal. Generate clean content ready to paste directly inside ${appLabel}.` +
+    `\nCRITICAL: Output ONLY the final content itself. Do NOT say "Sure, I will open ${appLabel} and write:" or add conversational meta-commentary or surrounding quotes.` +
+    `\nMatch the user's language (English, Hindi, or Hinglish). ${formattingRule}` +
+    capabilityContext;
+
+  const generated = await chat({
+    model: state.selectedModel || Models.PRIMARY,
+    messages: [
+      { role: "system", content: systemContent },
+      { role: "user", content: prompt },
+    ],
+    options: {
+      ...GenerationPresets.precise,
+      num_ctx: DEFAULT_NUM_CTX,
+      num_predict: 420,
+    },
+  });
+
+  return cleanGeneratedEditorText(generated);
+}
+
+async function ensureAppReadyAndWrite(
+  targetApp: string,
+  content: string,
+  preferNewTabIfBusy = true
+): Promise<{ success: boolean; title?: string; error?: string }> {
+  const { focusDesktopWindow, writeToDesktopApp } = await import("../tools/laptop/desktopControl.js");
+  const windowHint = resolveWriteAppWindowHint(targetApp);
+  const launchTarget = targetApp === "notes" ? "notepad" : targetApp;
+
+  const existing = await focusDesktopWindow(windowHint).catch(() => ({
+    success: false,
+    found: false,
+    title: undefined as string | undefined,
+  }));
+  const shouldOpenNewIfBusy = preferNewTabIfBusy && SINGLE_DOC_NEW_TAB_APPS.has(targetApp);
+  const canReuseOpenWindow =
+    existing.found && (!shouldOpenNewIfBusy || isBlankEditorWindow(targetApp, existing.title));
+
+  if (!canReuseOpenWindow && LAUNCHABLE_WRITE_APPS.has(launchTarget)) {
+    await openApp(launchTarget);
+    for (let attempt = 0; attempt < 7; attempt++) {
+      await new Promise((r) => setTimeout(r, 380));
+      const focused = await focusDesktopWindow(windowHint).catch(() => ({
+        success: false,
+        found: false,
+        title: undefined as string | undefined,
+      }));
+      if (focused.found && (!shouldOpenNewIfBusy || isBlankEditorWindow(targetApp, focused.title) || attempt >= 4)) {
+        break;
+      }
+    }
+    await new Promise((r) => setTimeout(r, 350));
+  } else if (existing.found) {
+    await new Promise((r) => setTimeout(r, 150));
+  }
+
+  return writeToDesktopApp(windowHint, content);
+}
+
 export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
   const startTimestamp = Date.now();
   log.info(`LaptopAgent: intent=${state.intent}`);
@@ -411,9 +556,10 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
         return { ...state, response, currentStep: "done" };
       }
 
-      // Fast Command Check (Direct URLs, Reminders, YouTube, Apps)
+      // Fast Command Check (prefer original un-normalized user input to preserve casing/punctuation)
       const { routeFastCommand } = await import("./commandRouter.js");
-      const fastCommand = routeFastCommand(state.currentInput);
+      const lastUserMsg = [...(state.messages || [])].reverse().find((m) => m.role === "user")?.content;
+      const fastCommand = (lastUserMsg ? routeFastCommand(lastUserMsg) : null) ?? routeFastCommand(state.currentInput);
       if (fastCommand) {
         const { dispatchTool } = await import("../tools/dispatcher.js");
         log.info("LaptopAgent executing fast command", { fastCommand });
@@ -464,7 +610,14 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
           }
 
           try {
-            const result = (await dispatchTool("computer.play_youtube", { query, action, selection: fastCommand.selection || "first" })) as string | { message?: string };
+            const commentNote = fastCommand.comment ? ` and commenting "${fastCommand.comment}"` : "";
+            state.onToken?.(`🎵 Playing "${query}" on YouTube${commentNote}...\n`);
+            const result = (await dispatchTool("computer.play_youtube", {
+              query,
+              action,
+              selection: fastCommand.selection || "first",
+              ...(fastCommand.comment ? { comment: fastCommand.comment } : {}),
+            })) as string | { message?: string };
             const responseMsg = typeof result === "string" ? result : result.message || `Completed YouTube ${action} for "${query}".`;
             state.onToken?.(responseMsg);
             addMessage("assistant", responseMsg, state.channel);
@@ -597,8 +750,19 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
 
         if (fastCommand.kind === "active_window") {
           try {
-            const res = (await dispatchTool("cua.active_window", {})) as any;
-            const data = (res && res.data) ? res.data : (res || {});
+            type WindowBounds = { width: number; height: number; x: number; y: number };
+            type ActiveWindowPayload = {
+              title?: string;
+              process?: string;
+              openApps?: string[];
+              bounds?: WindowBounds;
+              [key: string]: unknown;
+            };
+            const res = (await dispatchTool("cua.active_window", {})) as {
+              data?: ActiveWindowPayload;
+              [key: string]: unknown;
+            };
+            const data: ActiveWindowPayload = (res && res.data) ? res.data : (res || {});
             const title = data.title || "";
             const process = data.process || "";
             const openApps: string[] = Array.isArray(data.openApps) ? data.openApps : [];
@@ -622,12 +786,14 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
 
             // Also capture screenshot for visual verification
             try {
-              const ssRes = (await dispatchTool("system.screenshot", {})) as any;
+              const ssRes = (await dispatchTool("system.screenshot", {})) as { filePath?: string } | null | undefined;
               if (ssRes?.filePath) {
                 const pathMod = await import("path");
                 lines.push(`• **Visual Snapshot**: Captured \`${pathMod.basename(ssRes.filePath)}\``);
               }
-            } catch { }
+            } catch {
+              /* optional screenshot capture */
+            }
 
             const responseMsg = lines.join("\n");
             state.onToken?.(responseMsg);
@@ -643,7 +809,12 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
 
         if (fastCommand.kind === "cua_click") {
           try {
-            const res = (await dispatchTool("cua.click", { x: fastCommand.x, y: fastCommand.y })) as any;
+            const res = (await dispatchTool("cua.click", { x: fastCommand.x, y: fastCommand.y })) as {
+              data?: Record<string, unknown>;
+              success?: boolean;
+              error?: string;
+              [key: string]: unknown;
+            };
             const responseMsg = res?.success
               ? `🖱️ Mouse clicked successfully at (${fastCommand.x}, ${fastCommand.y}).`
               : `Failed to click: ${res?.error || "Unknown error"}`;
@@ -660,18 +831,23 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
 
         if (fastCommand.kind === "cua_type") {
           try {
-            let focusMsg = "";
             if (fastCommand.targetApp) {
-              const { focusDesktopWindow } = await import("../tools/laptop/desktopControl.js");
-              const focusRes = await focusDesktopWindow(fastCommand.targetApp);
-              if (focusRes.found) {
-                focusMsg = `Focused **${focusRes.title || fastCommand.targetApp}** and `;
-                await new Promise((r) => setTimeout(r, 250));
-              }
+              const writeRes = await ensureAppReadyAndWrite(fastCommand.targetApp, fastCommand.text, false);
+              const responseMsg = writeRes?.success
+                ? `⌨️ Typed "${fastCommand.text}" into **${writeRes.title || fastCommand.targetApp}**.`
+                : `Failed to type into ${fastCommand.targetApp}: ${writeRes?.error || "Window not found"}`;
+              state.onToken?.(responseMsg);
+              addMessage("assistant", responseMsg, state.channel);
+              return { ...state, response: responseMsg, currentStep: writeRes?.success ? "done" : "error" };
             }
-            const res = (await dispatchTool("cua.type", { text: fastCommand.text })) as any;
+            const res = (await dispatchTool("cua.type", { text: fastCommand.text })) as {
+              data?: Record<string, unknown>;
+              success?: boolean;
+              error?: string;
+              [key: string]: unknown;
+            };
             const responseMsg = res?.success
-              ? `⌨️ ${focusMsg}Typed "${fastCommand.text}" into the active desktop window.`
+              ? `⌨️ Typed "${fastCommand.text}" into the active desktop window.`
               : `Failed to type: ${res?.error || "Unknown error"}`;
             state.onToken?.(responseMsg);
             addMessage("assistant", responseMsg, state.channel);
@@ -684,11 +860,78 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
           }
         }
 
+        if (fastCommand.kind === "app_compose") {
+          const appLabel = fastCommand.app.charAt(0).toUpperCase() + fastCommand.app.slice(1);
+          try {
+            let contentToWrite = "";
+
+            if (fastCommand.mode === "literal") {
+              contentToWrite = fastCommand.text || "";
+            } else if (fastCommand.mode === "from_history") {
+              const recentHistory = getChannelChatHistory(state.channel, 6);
+              const prevAssistant = [...recentHistory]
+                .reverse()
+                .find(
+                  (m) =>
+                    m.role === "assistant" &&
+                    m.content.trim().length >= 8 &&
+                    !/^(?:Opening |⚠️|🖱️|Failed |No saved)/i.test(m.content.trim())
+                );
+              if (prevAssistant) {
+                contentToWrite = cleanGeneratedEditorText(prevAssistant.content);
+              } else {
+                const msg = `⚠️ I couldn't find a previous answer to write. Tell me what you want me to write in ${appLabel}!`;
+                state.onToken?.(msg);
+                addMessage("assistant", msg, state.channel);
+                return { ...state, response: msg, currentStep: "done" };
+              }
+            } else {
+              const genPrompt = fastCommand.prompt || fastCommand.raw;
+              state.onToken?.(`📝 Generating content and opening ${appLabel}...\n`);
+              contentToWrite = await generateContentForDesktopApp(genPrompt, state, fastCommand.app);
+            }
+
+            if (!contentToWrite.trim()) {
+              const errMsg = `Failed to prepare text to write in ${appLabel}.`;
+              state.onToken?.(errMsg);
+              addMessage("assistant", errMsg, state.channel);
+              return { ...state, response: errMsg, currentStep: "error" };
+            }
+
+            if (fastCommand.mode !== "generate") {
+              state.onToken?.(`📝 Opening ${appLabel} and writing...\n`);
+            }
+
+            const writeRes = await ensureAppReadyAndWrite(fastCommand.app, contentToWrite, true);
+            if (writeRes?.success) {
+              const responseMsg = `✅ Opened **${writeRes.title || appLabel}** and wrote it directly there:\n\n${contentToWrite}`;
+              state.onToken?.(responseMsg);
+              addMessage("assistant", responseMsg, state.channel);
+              return { ...state, response: responseMsg, currentStep: "done" };
+            }
+
+            const failMsg = `⚠️ Could not focus ${appLabel} to write directly (${writeRes?.error || "window unavailable"}).\n\nHere is the generated content:\n\n${contentToWrite}`;
+            state.onToken?.(failMsg);
+            addMessage("assistant", failMsg, state.channel);
+            return { ...state, response: failMsg, currentStep: "error" };
+          } catch (err) {
+            const errorMsg = formatErrorForUser(err);
+            state.onToken?.(errorMsg);
+            addMessage("assistant", errorMsg, state.channel);
+            return { ...state, response: errorMsg, currentStep: "error" };
+          }
+        }
+
         if (fastCommand.kind === "mcp_list") {
           try {
-            const res = (await dispatchTool("mcp.list_servers", {})) as any;
+            type McpServerSummary = { name: string; version: string; toolCount: number; tools: string[] };
+            const res = (await dispatchTool("mcp.list_servers", {})) as {
+              data?: { count?: number; servers?: McpServerSummary[] };
+              count?: number;
+              servers?: McpServerSummary[];
+            };
             const data = (res && res.data) ? res.data : (res || {});
-            const servers = data?.servers?.map((s: any) => `• **${s.name}** (v${s.version}) - ${s.toolCount} tools: \`[${s.tools.join(', ')}]\``).join('\n') || "No registered servers";
+            const servers = data?.servers?.map((s: McpServerSummary) => `• **${s.name}** (v${s.version}) - ${s.toolCount} tools: \`[${s.tools.join(', ')}]\``).join('\n') || "No registered servers";
             const responseMsg = `📦 **Registered MCP Servers (${data?.count || data?.servers?.length || 0})**:\n\n${servers}`;
             state.onToken?.(responseMsg);
             addMessage("assistant", responseMsg, state.channel);
@@ -713,7 +956,7 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
               return { ...state, response: responseMsg, currentStep: "done" };
             }
             throw new Error("Failed to verify SQLite fact persistence");
-          } catch (err) {
+          } catch {
             const errorMsg = "I couldn't save that to long-term memory.";
             state.onToken?.(errorMsg);
             addMessage("assistant", errorMsg, state.channel);
@@ -729,7 +972,7 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
             state.onToken?.(responseMsg);
             addMessage("assistant", responseMsg, state.channel);
             return { ...state, response: responseMsg, currentStep: "done" };
-          } catch (err) {
+          } catch {
             const errorMsg = "I couldn't retrieve your memory profile.";
             state.onToken?.(errorMsg);
             addMessage("assistant", errorMsg, state.channel);
@@ -775,7 +1018,7 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
               addMessage("assistant", responseMsg, state.channel);
               return { ...state, response: responseMsg, currentStep: "done" };
             }
-          } catch (err) {
+          } catch {
             const errorMsg = "I couldn't retrieve that from memory.";
             state.onToken?.(errorMsg);
             addMessage("assistant", errorMsg, state.channel);
@@ -783,17 +1026,20 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
           }
         }
 
-        if (fastCommand.kind === "social_message" || (fastCommand as any).kind === "browser_act") {
+        if (fastCommand.kind === "social_message" || fastCommand.kind === "browser_act") {
           try {
             const goal =
               fastCommand.kind === "social_message"
                 ? `Send message to ${fastCommand.recipient} on ${fastCommand.platform}: ${fastCommand.message}`
-                : (fastCommand as any).goal || fastCommand.raw;
+                : fastCommand.goal || fastCommand.raw;
+
+            const startUrl = fastCommand.kind === "browser_act" ? fastCommand.targetUrl : undefined;
 
             state.onToken?.(`🌐 Launching Universal Web Operator for goal: "${goal}"...\n`);
             const res = (await dispatchTool("browser.autonomous_act", {
               goal,
-            })) as any;
+              ...(startUrl ? { startUrl } : {}),
+            })) as { summary?: string; details?: string } | undefined;
 
             const responseMsg = res?.summary || res?.details || `Processed autonomous action for "${goal}".`;
             state.onToken?.(responseMsg);

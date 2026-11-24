@@ -11,13 +11,13 @@ import {
   ReasoningDepth,
 } from "../types";
 
-/** Simple deterministic UUID v4 replacement – sufficient for Phase 1 */
+/** Simple deterministic UUID v4 replacement – sufficient for Phase 1 */
 function genId(): string {
   return Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
 }
 
 /**
- * ConversationStateEngine – Phase 2 implementation.
+ * ConversationStateEngine – Phase 2 implementation.
  *
  * Provides a deterministic in‑memory store plus rich helpers for:
  *   • Topic tracking & transitions

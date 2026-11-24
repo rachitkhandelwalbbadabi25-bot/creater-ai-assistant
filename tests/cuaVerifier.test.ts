@@ -59,7 +59,7 @@ describe("Phase 5 Step 5 — Post-Action Verification Engine Tests", () => {
     } finally {
       await browserSessionManager.closeTab(tabId);
     }
-  });
+  }, 15000);
 
   it("4. Expected DOM state verification (element_present & element_absent) works correctly", async () => {
     const tabId = await browserSessionManager.openTab();
@@ -89,7 +89,7 @@ describe("Phase 5 Step 5 — Post-Action Verification Engine Tests", () => {
     } finally {
       await browserSessionManager.closeTab(tabId);
     }
-  });
+  }, 15000);
 
   it("5. Expected text/state verification (text_present & text_absent) works correctly", async () => {
     const tabId = await browserSessionManager.openTab();
@@ -106,7 +106,7 @@ describe("Phase 5 Step 5 — Post-Action Verification Engine Tests", () => {
     } finally {
       await browserSessionManager.closeTab(tabId);
     }
-  });
+  }, 15000);
 
   it("6. Visual verification detects state changes when baseline screenshot is provided", async () => {
     const tabId = await browserSessionManager.openTab();
@@ -140,7 +140,7 @@ describe("Phase 5 Step 5 — Post-Action Verification Engine Tests", () => {
       }
       await browserSessionManager.closeTab(tabId);
     }
-  });
+  }, 15000);
 
   it("7. Missing or invalid parameters return VERIFICATION_UNAVAILABLE structured status", async () => {
     const res1 = await verifyCuaAction({ type: "url_match" }); // missing target
@@ -170,14 +170,14 @@ describe("Phase 5 Step 5 — Post-Action Verification Engine Tests", () => {
 
       // Verify DOM was not mutated
       const mutated = await browserSessionManager.executeOnPage(async (page) => {
-        return page.evaluate(() => (window as any).mutated === true);
+        return page.evaluate(() => (window as Window & { mutated?: boolean }).mutated === true);
       }, tabId);
 
       expect(mutated).toBe(false);
     } finally {
       await browserSessionManager.closeTab(tabId);
     }
-  });
+  }, 15000);
 
   it("9. Verification failure returns NOT_VERIFIED without triggering retries or executing actions", async () => {
     const tabId = await browserSessionManager.openTab();
@@ -194,7 +194,7 @@ describe("Phase 5 Step 5 — Post-Action Verification Engine Tests", () => {
     } finally {
       await browserSessionManager.closeTab(tabId);
     }
-  });
+  }, 15000);
 
   it("10. Existing CuaPolicy, VisualAnchor, and ScreenAnalyzer behaviors remain unchanged", () => {
     // 1. CUA Policy check

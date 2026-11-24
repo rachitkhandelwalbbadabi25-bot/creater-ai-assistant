@@ -275,7 +275,7 @@ export function expandContext(query: string, maxNodes = 5, depth = 2): string {
     .slice(0, maxNodes)
     .map(item => item.node);
 
-  let contextParts: string[] = [];
+  const contextParts: string[] = [];
 
   const rootNode = getNodeWithEdges(rootLabel);
   if (rootNode) {

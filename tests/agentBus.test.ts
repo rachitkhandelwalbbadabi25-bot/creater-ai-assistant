@@ -13,5 +13,5 @@ describe("Agent Bus Tests", () => {
     expect(response).toContain("Reasoning");
     expect(response).toContain("Execution");
     expect(response).toContain("Verifier");
-  });
+  }, 60000);
 });

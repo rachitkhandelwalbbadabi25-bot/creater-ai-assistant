@@ -143,7 +143,7 @@ export async function runWorkflow(definition: WorkflowDefinition): Promise<Workf
         // Execute compensation step without further compensation to avoid loops
         try {
           await runStep(taskId, step.compensate);
-        } catch (_) {}
+        } catch { /* ignore compensation step errors */ }
       }
       // Mark workflow as failed and rethrow
       updateTask(taskId, (t) => ({ ...t, status: 'failed' }));

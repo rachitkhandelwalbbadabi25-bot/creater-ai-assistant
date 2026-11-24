@@ -137,6 +137,10 @@ export function pageToViewport(
 
 // ─── Visual State Acquisition (Passive Inspection Only) ──────────────────────
 
+function toErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /**
  * Capture full desktop screen state (Passive inspection only).
  * Reuses system OS screenshot capability in src/mcp/os/osOps.ts.
@@ -157,13 +161,14 @@ export async function captureDesktopScreen(): Promise<ScreenInspectionResult> {
     };
 
     return { success: true, metadata };
-  } catch (err: any) {
-    log.error("Failed to capture desktop screen visual state", { error: err.message });
+  } catch (err: unknown) {
+    const errMsg = toErrorMessage(err);
+    log.error("Failed to capture desktop screen visual state", { error: errMsg });
     return {
       success: false,
       error: {
         code: "CAPTURE_FAILED",
-        message: `Desktop screen capture failed: ${err.message}`,
+        message: `Desktop screen capture failed: ${errMsg}`,
         sourceType: "DESKTOP_SCREEN",
       },
     };
@@ -206,13 +211,14 @@ export async function captureBrowserViewport(
     };
 
     return { success: true, metadata };
-  } catch (err: any) {
-    log.error("Failed to capture browser viewport visual state", { error: err.message });
+  } catch (err: unknown) {
+    const errMsg = toErrorMessage(err);
+    log.error("Failed to capture browser viewport visual state", { error: errMsg });
     return {
       success: false,
       error: {
         code: "CAPTURE_FAILED",
-        message: `Browser viewport capture failed: ${err.message}`,
+        message: `Browser viewport capture failed: ${errMsg}`,
         sourceType: "BROWSER_VIEWPORT",
       },
     };
@@ -261,14 +267,15 @@ export async function captureDomElement(
     };
 
     return { success: true, metadata };
-  } catch (err: any) {
-    const isNotFound = err.message?.includes("not found");
-    log.error("Failed to capture DOM element visual state", { error: err.message, selector });
+  } catch (err: unknown) {
+    const errMsg = toErrorMessage(err);
+    const isNotFound = errMsg.includes("not found");
+    log.error("Failed to capture DOM element visual state", { error: errMsg, selector });
     return {
       success: false,
       error: {
         code: isNotFound ? "ELEMENT_NOT_FOUND" : "CAPTURE_FAILED",
-        message: `DOM element capture failed: ${err.message}`,
+        message: `DOM element capture failed: ${errMsg}`,
         sourceType: "BROWSER_ELEMENT",
       },
     };

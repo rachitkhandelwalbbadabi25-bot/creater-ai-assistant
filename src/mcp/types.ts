@@ -36,12 +36,25 @@ export interface McpPipelineStep {
   params: Record<string, unknown>;
   outputKey?: string;
   forwardResultAs?: string;
+  parallelGroup?: string;
+  retries?: number;
+  dependsOn?: string[];
+}
+
+export interface McpPipelineCheckpoint {
+  stepIndex: number;
+  serverName: string;
+  toolName: string;
+  outputKey?: string;
+  success: boolean;
+  timestamp: number;
 }
 
 export interface McpPipelineResult {
   success: boolean;
   stepResults: McpExecutionResult[];
   context: Record<string, unknown>;
+  checkpoints?: McpPipelineCheckpoint[];
   finalOutput?: unknown;
   error?: string;
 }

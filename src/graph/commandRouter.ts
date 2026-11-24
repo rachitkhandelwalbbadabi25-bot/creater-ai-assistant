@@ -12,7 +12,7 @@ export type FastCommand =
   | { kind: "open_downloads"; raw: string; path: string }
   | { kind: "close_app"; raw: string; app: string }
   | { kind: "browser_home"; raw: string }
-  | { kind: "youtube"; raw: string; action: "play" | "search"; query?: string; selection?: "first" }
+  | { kind: "youtube"; raw: string; action: "play" | "search"; query?: string; selection?: "first"; comment?: string }
   | { kind: "reminder"; raw: string; action: "create" | "list" | "cancel" | "query"; title?: string; timeInput?: string; query?: string; queryType?: "latest" | "all" }
   | { kind: "volume"; raw: string; direction: "up" | "down" | "mute" | "unmute" | "set"; value?: number }
   | { kind: "screenshot"; raw: string }
@@ -24,7 +24,15 @@ export type FastCommand =
   | { kind: "cua_type"; raw: string; text: string; targetApp?: string }
   | { kind: "mcp_list"; raw: string }
   | { kind: "social_message"; raw: string; platform: string; recipient: string; message: string }
-  | { kind: "browser_act"; raw: string; goal: string; targetUrl?: string };
+  | { kind: "browser_act"; raw: string; goal: string; targetUrl?: string }
+  | {
+    kind: "app_compose";
+    raw: string;
+    app: string;
+    mode: "generate" | "literal" | "from_history";
+    prompt?: string;
+    text?: string;
+  };
 
 export function normalizeCommandInput(input: string): string {
   return input
@@ -69,7 +77,9 @@ const DETERMINISTIC_COMMAND_MAP: Record<string, FastCommand> = {
   ss: { kind: "screenshot", raw: "ss" },
 };
 
-export function parseYouTubeCommand(input: string): { action: "play" | "search"; query?: string; selection?: "first" } | null {
+export function parseYouTubeCommand(
+  input: string
+): { action: "play" | "search"; query?: string; selection?: "first"; comment?: string } | null {
   const raw = input.trim();
   if (!raw) return null;
 
@@ -100,24 +110,63 @@ export function parseYouTubeCommand(input: string): { action: "play" | "search";
     action = "search";
   }
 
-  // Preserve quoted queries if present (e.g. play "Hustle 5 first video")
-  const quotedMatch = raw.match(/["'“](.+?)["'”]/);
-  if (quotedMatch && quotedMatch[1].trim()) {
-    const query = quotedMatch[1].trim();
+  // Extract optional trailing comment clause (e.g. 'and comment "hello" on their video now')
+  let comment: string | undefined;
+  const commentClauseMatch = raw.match(
+    /\s+(?:and|then|aur)\s+(?:please\s+)?(?:comment|write\s+a?\s*comment|post\s+a?\s*comment|leave\s+a?\s*comment|reply)\b\s*([\s\S]+)$/i
+  );
+  if (commentClauseMatch && commentClauseMatch[1]) {
+    const clauseBody = commentClauseMatch[1].trim();
+    const quotedComment = clauseBody.match(/["'“](.+?)["'”]/);
+    if (quotedComment && quotedComment[1].trim()) {
+      comment = quotedComment[1].trim();
+    } else {
+      const cleanedComment = clauseBody
+        .replace(
+          /\s+(?:on|in|under|to|pe|par)\s+(?:their|thier|the|this|that|his|her|its|video|videos|youtube|it|post)\b[\s\S]*$/i,
+          ""
+        )
+        .replace(/\s+(?:comment\s*)?(?:kar|karo|kar\s*do|de|do|now|abhi|ab|bhai|bro|yaar|please)+$/i, "")
+        .replace(/^["'“]|["'”]$/g, "")
+        .trim();
+      if (cleanedComment) {
+        comment = cleanedComment;
+      }
+    }
+  }
+
+  // Preserve quoted queries only when the quote is the direct object of play/search/find
+  // (e.g. play "Hustle 5 first video"), NOT when quotes belong to a trailing "and comment 'hello'" clause
+  const directQuotedMatch = raw.match(
+    /^(?:(?:ok|okay|now|abhi|ab|bhai|bro|yaar|hey|hello|please|kindly|can\s+you|could\s+you)\s+)*(?:open\s+youtube\s+(?:and|to)\s+)?(?:play|search|find|show\s+me)\s+["'“](.+?)["'”](?:\s+on\s+youtube)?$/i
+  );
+  if (directQuotedMatch && directQuotedMatch[1].trim()) {
+    const query = directQuotedMatch[1].trim();
     return {
       action,
       query,
       ...(action === "play" ? { selection: "first" as const } : {}),
+      ...(comment ? { comment } : {}),
     };
   }
 
   let query = raw;
 
-  // 1. Remove leading YouTube prefix
-  query = query.replace(/^(?:youtube\s+(?:pe|par|search\s+for|search)?|open\s+youtube(?:\s+to\s+play)?)\s*/i, "");
+  // Strip trailing secondary clauses such as "and comment 'hello' on their video now", "and like the video", "and subscribe"
+  query = query.replace(
+    /\s+(?:and|then|aur)\s+(?:please\s+)?(?:comment|write\s+a?\s*comment|post\s+a?\s*comment|leave\s+a?\s*comment|reply|write|type|say|post|like|subscribe|share)\b[\s\S]*$/i,
+    ""
+  );
+
+  // 0. Remove conversational / polite filler prefixes before parsing YouTube query
+  // e.g. "ok now can you", "ok now", "can you", "please", "bhai", "yaar", "ab", "abhi"
+  query = query.replace(/^(?:(?:ok|okay|now|abhi|ab|bhai|bro|yaar|hey|hello|please|kindly|can\s+you|could\s+you)\s+)+/i, "");
+
+  // 1. Remove leading YouTube prefix and conjunctions
+  query = query.replace(/^(?:youtube\s+(?:pe|par|search\s+for|search)?|open\s+youtube(?:\s+(?:and|to)\s+(?:play|search))?)\s*/i, "");
 
   // 2. Remove leading action verbs
-  query = query.replace(/^(?:search|find|show\s+me|play|open|run)\s+/i, "");
+  query = query.replace(/^(?:and\s+)?(?:search|find|show\s+me|play|open|run)\s+/i, "");
 
   // 3. Remove selection phrases describing WHICH result to pick
   // e.g. "the first video which you see", "first video you see", "the first video that you see", "first video", "first result", "top video", "pehli video", "sabse pehli video"
@@ -128,25 +177,27 @@ export function parseYouTubeCommand(input: string): { action: "play" | "search";
   query = query.replace(/\b(?:on|in|pe|par)\s+youtube(?:\s+(?:of|pe|par))?\b/gi, " ");
   query = query.replace(/^youtube\s+/i, "");
 
-  // 5. Remove trailing Hinglish / English action suffixes, connectors and leftover video terms
+  // 5. Remove trailing Hinglish / English action suffixes, connectors, trailing filler words and leftover video terms
   query = query
     .replace(/\s+(?:ki|ka|ko)?\s*(?:video|videos|result|results)?\s*(?:chala|chalao|play\s*kar|play\s*karo|play|dikha)?$/i, "")
     .replace(/\s+(?:ki|ka|ko)$/i, "")
     .replace(/\s+(?:chala|chalao|play\s*kar|play\s*karo)$/i, "")
     .replace(/\s+(?:video|videos)$/i, "")
+    .replace(/\s+(?:now|abhi|ab|bhai|bro|yaar|please)$/i, "")
     .replace(/^\s*of\s+/i, "")
     .replace(/\s+of\s*$/i, "")
     .replace(/\s+/g, " ")
     .trim();
 
   // Clean any residual leading verb or connectors
-  query = query.replace(/^(?:play|search|find|show\s+me|of)\s+/i, "").trim();
+  query = query.replace(/^(?:and\s+)?(?:play|search|find|show\s+me|of)\s+/i, "").trim();
 
   if (!query || query.toLowerCase() === "youtube") {
     return {
       action,
       query: undefined,
       ...(action === "play" ? { selection: "first" as const } : {}),
+      ...(comment ? { comment } : {}),
     };
   }
 
@@ -154,6 +205,7 @@ export function parseYouTubeCommand(input: string): { action: "play" | "search";
     action,
     query,
     ...(action === "play" ? { selection: "first" as const } : {}),
+    ...(comment ? { comment } : {}),
   };
 }
 
@@ -449,6 +501,187 @@ const ACTION_VERB_REGEX = /^(?:please\s+|kindly\s+|can\s+you\s+|could\s+you\s+|b
 const WEB_INFO_TARGET_REGEX = /\b(information|info|news|articles?|jobs?|frameworks?|tutorials?|guides?|about|how\s+to|what\s+is|who\s+is|latest|tools?|software|definition|meaning)\b/i;
 const WEB_PROVIDER_TARGET_REGEX = /\b(on\s+google|on\s+youtube|google\s+search|web\s+search|online|internet|wikipedia|github|amazon)\b/i;
 
+function normalizeWriteTargetApp(rawApp: string): string {
+  const lower = rawApp.trim().toLowerCase().replace(/\s+/g, " ");
+  if (lower === "note pad" || lower === "notepad" || lower === "notepads" || lower === "notpad" || lower === "notepad.exe") {
+    return "notepad";
+  }
+  if (lower === "notepad++" || lower === "npp") return "notepad++";
+  if (lower === "wordpad" || lower === "word pad") return "wordpad";
+  if (lower === "word" || lower === "ms word" || lower === "microsoft word" || lower === "winword") return "word";
+  if (lower === "vscode" || lower === "vs code" || lower === "visual studio code") return "vscode";
+  if (lower === "sticky note" || lower === "sticky notes") return "sticky notes";
+  if (lower === "sublime" || lower === "sublime text") return "sublime";
+  if (lower === "notes app" || lower === "apple notes" || lower === "samsung notes") return "notes";
+  return lower;
+}
+
+function cleanGenerationPrompt(rawPrompt: string): string {
+  return rawPrompt
+    .trim()
+    .replace(/^(?:(?:ok|okay|now|abhi|ab|bhai|bro|yaar|hey|hello|please|kindly)\s+)+/i, "")
+    .replace(/^(?:ell|tll)\s+me\b/i, "tell me")
+    .replace(/\bthings\s+you\s+can\s+do\s+it\b/i, "things you can do")
+    .replace(/(?:\s+(?:now|abhi|ab|please|bro|yaar))+\s*[.!?]*$/i, "")
+    .trim();
+}
+
+function classifyWritePayload(
+  rawPayload: string,
+  preferGenerate = false
+): { mode: "generate" | "literal" | "from_history"; prompt?: string; text?: string } {
+  const trimmed = rawPayload.trim().replace(/(?:\s+(?:now|abhi|ab|please|bro|yaar))+\s*[.!?]*$/i, "").trim();
+
+  // Quoted text is strictly literal
+  const quoteMatch = trimmed.match(/^["'“]([\s\S]+)["'”]$/);
+  if (quoteMatch && quoteMatch[1].trim()) {
+    return { mode: "literal", text: quoteMatch[1].trim() };
+  }
+
+  // Referential pronouns reuse previous assistant response
+  if (
+    /^(?:it|this|that|everything|all(?:\s+of\s+(?:it|this|that))?|the\s+(?:same|answer|response|result|above|last\s+(?:answer|response|message))|your\s+(?:answer|response|last\s+message)|whatever\s+you\s+(?:just\s+)?said|isey|ise|isko|usse|use|usko|ye|yeh)$/i.test(
+      trimmed
+    )
+  ) {
+    return { mode: "from_history" };
+  }
+
+  const generativePattern =
+    /^(?:tell|explain|describe|summarize|list|generate|create|draft|compose|brainstorm|suggest|prepare|make|compare|batao|bata|samjhao|what|how|why|who|which|when|where)\b|^(?:about|on|regarding|for)\s+\S+|^(?:something|anything|kuch|thoda)\b|^(?:a|an|some|the|one|two|three|five|\d+|my|your|apni|apna|apne|ek)\s+(?:[a-z0-9-]+\s+){0,3}(?:summary|essay|poem|shayari|letter|application|email|mail|story|kahani|article|blog|report|notes?|todo|checklist|list|code|function|script|program|bio|caption|tweet|post|description|intro|introduction|capabilit\w*|features?|skills?|things?|jokes?|quotes?|speech|plan|roadmap|schedule|points?|paragraphs?|tips|ideas|steps|guide|tutorial|definition|difference|questions?|answers?|commands?|recipes?|lyrics|wish|greeting|invitation|notice|agenda|minutes|resume|cover\s+letter)\b|\b(?:capabilities|features|ke\s+baare\s+me(?:in)?|ke\s+bare\s+me(?:in)?|ke\s+upar|par\s+kuch|batao|bata\s*do|bata\s*de|samjhao|samjha\s*do|likh\s*ke\s+batao|kya\s+hota|kya\s+hai|kaise|kyu|kyon|kaun|kaisa|kitna|apne\s+baare|apne\s+bare)\b/i;
+
+  if (preferGenerate || generativePattern.test(trimmed)) {
+    return { mode: "generate", prompt: cleanGenerationPrompt(trimmed) };
+  }
+
+  return { mode: "literal", text: trimmed };
+}
+
+/**
+ * Parses compound or direct commands that ask Creater AI to answer/generate/copy content
+ * and write it directly into Notepad (or another desktop editor).
+ */
+export function parseAppComposeCommand(input: string): Extract<FastCommand, { kind: "app_compose" }> | null {
+  const rawTrimmed = input.trim();
+  if (!rawTrimmed) return null;
+
+  // Match explicit desktop writing/editor apps; require ms/microsoft/winword or prep+word to avoid English idioms like "in a word"
+  const explicitApps =
+    "notepad\\+\\+|npp|notepads?|note\\s*pad|notpad|notepad\\.exe|word\\s*pad|wordpad|ms\\s*word|microsoft\\s*word|winword|vs\\s*code|vscode|visual\\s*studio\\s*code|sticky\\s*notes?|obsidian|notion|sublime\\s*text|sublime|notes\\s+app|apple\\s*notes|samsung\\s*notes";
+  const prepWithWord = `${explicitApps}|word`;
+  const prepPattern = "(?:in|into|on|to|inside|bin|me|pe|par)";
+  const writeVerbPattern =
+    "(?:write|type|paste|put|save|add|insert|note\\s+down|jot\\s+down|daal\\s*do|daal\\s*de|dal\\s*do|dal\\s*de|likh\\s*do|likh\\s*de|likh\\s*dena|likhwa\\s*do|likhwa\\s*de|likh|likho|type\\s*karo|type\\s*kar|type\\s*karde|type\\s*kar\\s*do|paste\\s*karo|paste\\s*kar|paste\\s*karde|paste\\s*kar\\s*do|save\\s*karo|save\\s*kar|save\\s*karde|save\\s*kar\\s*do)";
+  const fillerSuffix = "(?:\\s+(?:now|please|bro|yaar|abhi|ab))*\\s*[.!?]*";
+
+  // 1. App-first compound: "open notepad and write/tell me ...", "open vscode and write a ts script"
+  const appFirstRegex = new RegExp(
+    `^(?:(?:ok|okay|now|abhi|ab|bhai|bro|yaar|hey|hello|please|kindly|can\\s+you|could\\s+you)\\s+)*(?:open|launch|start)\\s+(?:the\\s+)?(${prepWithWord})\\s+(?:and|aur|&|to)\\s+(.+)${fillerSuffix}$`,
+    "i"
+  );
+  const appFirstMatch = rawTrimmed.match(appFirstRegex);
+  if (appFirstMatch && appFirstMatch[1] && appFirstMatch[2]) {
+    const app = normalizeWriteTargetApp(appFirstMatch[1]);
+    const rest = appFirstMatch[2].trim();
+    const stripWriteLead = rest.match(
+      /^(?:write|type|paste|put|save|add|insert|note\s+down|jot\s+down|likh\s*do|likh\s*de|likh\s*dena|likh|likho|daal\s*do|daal\s*de|type\s*karo|type\s*kar)\s+(?:down\s+)?(.+?)(?:\s+(?:inside|in|into|there|me|pe))?$/i
+    );
+    if (stripWriteLead && stripWriteLead[1]) {
+      const inner = stripWriteLead[1].trim();
+      const classified = classifyWritePayload(inner, false);
+      return { kind: "app_compose", raw: input, app, ...classified };
+    }
+    const classified = classifyWritePayload(rest, true);
+    return { kind: "app_compose", raw: input, app, ...classified };
+  }
+
+  // 2. Content-first compound: "tell me what things you can do and write it in notepad"
+  const contentAndWriteRegex = new RegExp(
+    `^(.+?)\\s+(?:and(?:\\s+then)?|aur|phir|fir|&|,)\\s+(?:also\\s+|directly\\s+|sidhe\\s+|then\\s+)?${writeVerbPattern}\\s+(?:down\\s+)?(?:(?:it|this|that|everything|all(?:\\s+of\\s+(?:it|that|this))?|isey|ise|isko|yeh|ye|answer|response|result)\\s+)?(?:now\\s+|please\\s+|bro\\s+|yaar\\s+|directly\\s+|sidhe\\s+)*${prepPattern}\\s+(?:the\\s+)?(${prepWithWord})${fillerSuffix}$`,
+    "i"
+  );
+  const cwMatch = rawTrimmed.match(contentAndWriteRegex);
+  if (cwMatch && cwMatch[1] && cwMatch[2]) {
+    const app = normalizeWriteTargetApp(cwMatch[2]);
+    const prompt = cleanGenerationPrompt(cwMatch[1]);
+    if (prompt && !/^(?:open|launch|start)\s+/i.test(prompt)) {
+      return { kind: "app_compose", raw: input, app, mode: "generate", prompt };
+    }
+  }
+
+  // 3. Hinglish content + "<app> me likho": "apni capabilities batao aur usse sidhe notepad me likh do"
+  const hinglishCompoundRegex = new RegExp(
+    `^(.+?)\\s+(?:and(?:\\s+then)?|aur|phir|fir|&|,)\\s+(?:(?:usse|use|usko|isey|ise|isko|it|this|that)\\s+)?(?:sidhe\\s+|directly\\s+)?(?:the\\s+)?(${prepWithWord})\\s+(?:me|pe|par|in)\\s+(?:it|this|isey|ise|isko|ye|yeh\\s+)?${writeVerbPattern}(?:\\s+(?:it|this|that|karo|do|de))?${fillerSuffix}$`,
+    "i"
+  );
+  const hcMatch = rawTrimmed.match(hinglishCompoundRegex);
+  if (hcMatch && hcMatch[1] && hcMatch[2]) {
+    const app = normalizeWriteTargetApp(hcMatch[2]);
+    const prompt = cleanGenerationPrompt(hcMatch[1]);
+    if (prompt && !/^(?:open|launch|start)\s+/i.test(prompt)) {
+      return { kind: "app_compose", raw: input, app, mode: "generate", prompt };
+    }
+  }
+
+  // 4. Direct write/explain into app: "write an essay in word", "draft a cover letter in notepad", "explain AI in notepad"
+  const directWriteRegex = new RegExp(
+    `^(?:(?:ok|okay|now|abhi|ab|bhai|bro|yaar|hey|hello|please|kindly|can\\s+you|could\\s+you)\\s+)*(?:${writeVerbPattern}|tell\\s+me|explain|describe|summarize|list|generate|create|draft|compose|prepare|make|brainstorm|suggest|batao|samjhao)\\s+(?:down\\s+)?(.+?)\\s+${prepPattern}\\s+(?:the\\s+)?(${prepWithWord})${fillerSuffix}$`,
+    "i"
+  );
+  const dwMatch = rawTrimmed.match(directWriteRegex);
+  if (dwMatch && dwMatch[1] && dwMatch[2]) {
+    const app = normalizeWriteTargetApp(dwMatch[2]);
+    const rawClause = dwMatch[0].trim();
+    const startsWithGenVerb =
+      /^(?:(?:ok|okay|now|abhi|ab|bhai|bro|yaar|hey|hello|please|kindly|can\s+you|could\s+you)\s+)*(?:tell\s+me|explain|describe|summarize|list|generate|create|draft|compose|prepare|make|brainstorm|suggest|batao|samjhao)\b/i.test(
+        rawClause
+      );
+    const payloadRaw = dwMatch[1].trim();
+    const classified = startsWithGenVerb
+      ? { mode: "generate" as const, prompt: cleanGenerationPrompt(rawClause.replace(new RegExp(`\\s+${prepPattern}\\s+(?:the\\s+)?(${prepWithWord})${fillerSuffix}$`, "i"), "")) }
+      : classifyWritePayload(payloadRaw, false);
+    return { kind: "app_compose", raw: input, app, ...classified };
+  }
+
+  // 5. App-prep-first Hinglish: "notepad me apni capabilities likh do" or "apni capabilities notepad me likho"
+  const appMeFirstRegex = new RegExp(
+    `^(?:(?:ok|okay|now|abhi|ab|bhai|bro|yaar|hey|hello|please|kindly)\\s+)*(?:the\\s+)?(${prepWithWord})\\s+(?:me|pe|par|in)\\s+(.+?)\\s+${writeVerbPattern}${fillerSuffix}$`,
+    "i"
+  );
+  const amMatch = rawTrimmed.match(appMeFirstRegex);
+  if (amMatch && amMatch[1] && amMatch[2]) {
+    const app = normalizeWriteTargetApp(amMatch[1]);
+    const classified = classifyWritePayload(amMatch[2], false);
+    return { kind: "app_compose", raw: input, app, ...classified };
+  }
+
+  const suffixAppLikhRegex = new RegExp(
+    `^(?:(?:ok|okay|now|abhi|ab|bhai|bro|yaar|hey|hello|please|kindly)\\s+)*(.+?)\\s+(?:the\\s+)?(${prepWithWord})\\s+(?:me|pe|par|in)\\s+${writeVerbPattern}${fillerSuffix}$`,
+    "i"
+  );
+  const salMatch = rawTrimmed.match(suffixAppLikhRegex);
+  if (salMatch && salMatch[1] && salMatch[2]) {
+    const app = normalizeWriteTargetApp(salMatch[2]);
+    const classified = classifyWritePayload(salMatch[1], true);
+    return { kind: "app_compose", raw: input, app, ...classified };
+  }
+
+  // 6. Content + verb + app + postposition: "apni capabilities likh do notepad me" (for standalone "word" require prep/postposition)
+  const verbBeforeAppSuffixRegex = new RegExp(
+    `^(?:(?:ok|okay|now|abhi|ab|bhai|bro|yaar|hey|hello|please|kindly)\\s+)*(.+?)\\s+${writeVerbPattern}\\s+(?:(?:it|this|isey|ise|isko|ye|yeh)\\s+)?(?:${prepPattern}\\s+(?:the\\s+)?(${prepWithWord})|(?:the\\s+)?(${explicitApps}))(?:\\s+(?:me|pe|par))?${fillerSuffix}$`,
+    "i"
+  );
+  const vbaMatch = rawTrimmed.match(verbBeforeAppSuffixRegex);
+  const vbaApp = vbaMatch?.[2] || vbaMatch?.[3];
+  if (vbaMatch && vbaMatch[1] && vbaApp) {
+    const app = normalizeWriteTargetApp(vbaApp);
+    const classified = classifyWritePayload(vbaMatch[1], false);
+    return { kind: "app_compose", raw: input, app, ...classified };
+  }
+
+  return null;
+}
+
 export function routeFastCommand(input: string): FastCommand | null {
   const rawTrimmed = input.trim();
   log.info("Fast router received command", { input, rawTrimmed });
@@ -517,6 +750,13 @@ export function routeFastCommand(input: string): FastCommand | null {
     };
   }
 
+  // Compound or direct desktop writing (e.g. "tell me what things you can do and write it in notepad", "open vscode and write a ts script")
+  // Check before cua_type so generative/history "type a poem in notepad" or "type it in word" uses app_compose, while literal "type Hello into notepad" still uses cua_type.
+  const appComposeCmd = parseAppComposeCommand(rawTrimmed);
+  if (appComposeCmd && (appComposeCmd.mode !== "literal" || !/^type\s+/i.test(rawTrimmed))) {
+    return appComposeCmd;
+  }
+
   // CUA: Type text into active window (e.g. "type hello into notepad", "type Hello Rachit")
   const typeMatch = rawTrimmed.match(/^type\s+(.+?)(?:\s+(?:in|into|on)\s+(?:the\s+)?(?:active\s+)?(window|notepad|screen|[a-z0-9_-]+))?$/i);
   if (typeMatch && typeMatch[1] && !typeMatch[1].toLowerCase().startsWith("of ") && !typeMatch[1].toLowerCase().startsWith("script")) {
@@ -530,14 +770,18 @@ export function routeFastCommand(input: string): FastCommand | null {
     };
   }
 
+  if (appComposeCmd) {
+    return appComposeCmd;
+  }
+
   // Multi-MCP: List servers (e.g. "list mcp servers", "list all mcp servers", "show mcp servers")
   if (/^(?:list|show)\s+(?:all\s+)?mcp\s+servers?$/i.test(rawTrimmed) || /^(?:list|show)\s+(?:all\s+)?mcp\s+servers?$/i.test(input.trim())) {
     return { kind: "mcp_list", raw: input };
   }
 
   // Social messaging parser (e.g. "open linkedin and message to ojas -how are you bro", "dm ojas on insta: hey", "message ojas on linkedin -hi")
-  const pSocial1 = /^(?:now\s+)?open\s+([a-z0-9_-]+)\s+and\s+(?:send\s+(?:a\s+)?message|message|dm|text)\s+(?:to\s+)?([a-z0-9_.\s]+?)\s*[-:]\s*(.+)$/i;
-  const pSocial2 = /^(?:now\s+)?(?:send\s+(?:a\s+)?message|message|dm|text)\s+(?:to\s+)?([a-z0-9_.\s]+?)\s+(?:on|in)\s+([a-z0-9_-]+)\s*[-:]\s*(.+)$/i;
+  const pSocial1 = /^(?:(?:ok|okay|now|abhi|ab|bhai|bro|yaar|hey|hello|please|kindly|can\s+you|could\s+you)\s+)*open\s+([a-z0-9_-]+)\s+and\s+(?:send\s+(?:a\s+)?message|message|dm|text)\s+(?:to\s+)?([a-z0-9_.\s]+?)\s*[-:]\s*(.+)$/i;
+  const pSocial2 = /^(?:(?:ok|okay|now|abhi|ab|bhai|bro|yaar|hey|hello|please|kindly|can\s+you|could\s+you)\s+)*(?:send\s+(?:a\s+)?message|message|dm|text)\s+(?:to\s+)?([a-z0-9_.\s]+?)\s+(?:on|in)\s+([a-z0-9_-]+)\s*[-:]\s*(.+)$/i;
   const socialMatch1 = rawTrimmed.match(pSocial1);
   const socialMatch2 = !socialMatch1 ? rawTrimmed.match(pSocial2) : null;
   if (socialMatch1 || socialMatch2) {
@@ -561,12 +805,27 @@ export function routeFastCommand(input: string): FastCommand | null {
     };
   }
 
-  // Universal autonomous web operator parser (e.g. "open github and star langchain", "go to amazon and search iphone 16", "open reddit and find best keyboards")
-  const pWebAct = /^(?:now\s+)?(?:open|go\s+to)\s+([a-z0-9_.-]+)\s+and\s+(.+)$/i;
+  // Check YouTube command parsing BEFORE general web actions
+  const ytParsed = parseYouTubeCommand(input);
+  if (ytParsed) {
+    return {
+      kind: "youtube",
+      raw: input,
+      action: ytParsed.action,
+      ...(ytParsed.query ? { query: ytParsed.query } : {}),
+      ...(ytParsed.selection ? { selection: ytParsed.selection } : {}),
+      ...(ytParsed.comment ? { comment: ytParsed.comment } : {}),
+    };
+  }
+
+  // Universal autonomous web operator parser
+  // Matches "open <site> and <goal>", "go to <site> and <goal>" with arbitrary filler words
+  // e.g. "ok now can you open linkedin and say hello to ojas", "open github and search deepseek-v3"
+  const pWebAct = /^(?:(?:ok|okay|now|abhi|ab|bhai|bro|yaar|hey|hello|please|kindly|can\s+you|could\s+you)\s+)*(?:open|go\s+to)\s+([a-z0-9_.-]+)\s+and\s+(.+)$/i;
   const webActMatch = rawTrimmed.match(pWebAct);
   if (
     webActMatch &&
-    !["notepad", "calculator", "calc", "paint", "explorer", "cmd", "terminal", "vscode", "code"].includes(
+    !["notepad", "calculator", "calc", "paint", "explorer", "cmd", "terminal", "vscode", "code", "youtube"].includes(
       webActMatch[1].toLowerCase()
     )
   ) {
@@ -594,18 +853,6 @@ export function routeFastCommand(input: string): FastCommand | null {
   const reminderCmd = parseReminderCommand(input);
   if (reminderCmd) {
     return reminderCmd;
-  }
-
-  // Check YouTube command parsing
-  const ytParsed = parseYouTubeCommand(input);
-  if (ytParsed) {
-    return {
-      kind: "youtube",
-      raw: input,
-      action: ytParsed.action,
-      ...(ytParsed.query ? { query: ytParsed.query } : {}),
-      ...(ytParsed.selection ? { selection: ytParsed.selection } : {}),
-    };
   }
 
   const normalized = normalizeCommandInput(input);
@@ -675,7 +922,6 @@ export function routeFastCommand(input: string): FastCommand | null {
   // Natural Action Verb & Special Folder Parsing
   const actionMatch = rawTrimmed.match(ACTION_VERB_REGEX);
   if (actionMatch) {
-    const verb = actionMatch[1]!.toLowerCase();
     const target = actionMatch[2]!.trim();
 
     // Check special folder resolution on target

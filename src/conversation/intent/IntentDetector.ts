@@ -3,7 +3,7 @@
 import { Intent } from "../types";
 
 /**
- * Very small deterministic intent detector for Phase 1.
+ * Very small deterministic intent detector for Phase 1.
  * It uses simple keyword matching – no external LLM.
  */
 export class IntentDetector {

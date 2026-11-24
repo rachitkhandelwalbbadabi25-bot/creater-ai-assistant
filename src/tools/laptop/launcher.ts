@@ -27,7 +27,9 @@ interface AppDefinition {
 }
 
 const WINDOWS_APPS: AppDefinition[] = [
-  { names: ["notepad", "notes"], command: "notepad.exe" },
+  { names: ["notepad", "notes", "notpad"], command: "notepad.exe" },
+  { names: ["notepad++", "npp"], command: "notepad++.exe" },
+  { names: ["wordpad", "word pad"], command: "wordpad.exe" },
   { names: ["calculator", "calc"], command: "calc.exe" },
   { names: ["paint", "mspaint"], command: "mspaint.exe" },
   { names: ["explorer", "file explorer", "files"], command: "explorer.exe" },
@@ -37,9 +39,12 @@ const WINDOWS_APPS: AppDefinition[] = [
   { names: ["chrome", "google chrome"], command: "chrome.exe" },
   { names: ["firefox"], command: "firefox.exe" },
   { names: ["vscode", "vs code", "visual studio code", "code"], command: "code.cmd" },
-  { names: ["word", "microsoft word"], command: "winword.exe" },
+  { names: ["word", "ms word", "microsoft word", "winword"], command: "winword.exe" },
   { names: ["excel", "microsoft excel"], command: "excel.exe" },
   { names: ["powerpoint", "microsoft powerpoint"], command: "powerpnt.exe" },
+  { names: ["sublime", "sublime text"], command: "sublime_text.exe" },
+  { names: ["obsidian"], command: "obsidian.exe" },
+  { names: ["notion"], command: "notion.exe" },
 ];
 
 const WINDOWS_BROWSER_PATHS: Record<string, string[]> = {
@@ -136,7 +141,7 @@ function resolveBrowserExecutable(browser: string): string {
 async function runWindowsOpen(target: string, kind: LaunchKind): Promise<void> {
   launchTrace("src/tools/laptop/launcher.ts", "runWindowsOpen", target);
   const startedAt = nowMs();
-  
+
   if (kind === "url" || kind === "app" || kind === "file") {
     if (IS_RUNTIME_DEBUG && kind === "url") {
       log.info("WINDOWS URL OPEN DETECTED", { target });
@@ -148,7 +153,17 @@ async function runWindowsOpen(target: string, kind: LaunchKind): Promise<void> {
       log.info("WINDOWS FILE OPEN DETECTED", { target });
     }
 
-    const cmdArgs = kind === "url" ? ["cmd.exe", "/c", "start", "", target.replace(/&/g, "^&")] : ["cmd.exe", "/c", "start", "", target];
+    let cmdArgs: string[];
+    if (kind === "url") {
+      try {
+        const chromeExe = resolveBrowserExecutable("chrome");
+        cmdArgs = [chromeExe, target];
+      } catch {
+        cmdArgs = ["cmd.exe", "/c", "start", "", target.replace(/&/g, "^&")];
+      }
+    } else {
+      cmdArgs = ["cmd.exe", "/c", "start", "", target];
+    }
 
     if (typeof Bun !== "undefined") {
       const proc = Bun.spawn({
@@ -158,19 +173,52 @@ async function runWindowsOpen(target: string, kind: LaunchKind): Promise<void> {
         windowsHide: true,
       });
 
-      const exitCode = await proc.exited;
+      // Browser and desktop GUI processes on Windows:
+      // 1. Hand off to existing instance and exit immediately with 0 or 21 (Chromium RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED)
+      // 2. Or stay running as active GUI windows (never exit until user closes them)
+      const earlyExit = await Promise.race([
+        proc.exited.then((code) => ({ exited: true, code })),
+        new Promise<{ exited: false }>((r) => setTimeout(() => r({ exited: false }), 800)),
+      ]);
 
-      if (exitCode !== 0) {
-        throw new Error(`Windows open failed with exit code ${exitCode}`);
+      if (earlyExit.exited) {
+        const isSuccess = earlyExit.code === 0 || (kind === "url" && earlyExit.code === 21);
+        if (!isSuccess) {
+          throw new Error(`Windows open failed with exit code ${earlyExit.code}`);
+        }
+      } else {
+        proc.unref();
       }
     } else {
       const { spawn } = await import("node:child_process");
       await new Promise<void>((resolve, reject) => {
+        let settled = false;
         const proc = spawn(cmdArgs[0], cmdArgs.slice(1), { windowsHide: true, detached: true, stdio: "ignore" });
-        proc.on("error", reject);
+        const timer = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            try {
+              proc.unref();
+            } catch {
+              /* ignore unref failure if process exited early */
+            }
+            resolve();
+          }
+        }, 800);
+        proc.on("error", (err) => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            reject(err);
+          }
+        });
         proc.on("exit", (code) => {
-          if (code === 0 || code === null) resolve();
-          else reject(new Error(`Windows open failed with exit code ${code}`));
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            if (code === 0 || (kind === "url" && code === 21) || code === null) resolve();
+            else reject(new Error(`Windows open failed with exit code ${code}`));
+          }
         });
       });
     }
@@ -369,13 +417,22 @@ export async function openUrlInBrowser(browser: string, targetUrl: string): Prom
       stderr: "pipe",
       windowsHide: true,
     });
-    const [exitCode, stdout, stderr] = await Promise.all([
-      proc.exited,
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
+    const earlyExit = await Promise.race([
+      proc.exited.then(async (code) => ({
+        exited: true,
+        code,
+        stderr: await new Response(proc.stderr).text().catch(() => ""),
+        stdout: await new Response(proc.stdout).text().catch(() => ""),
+      })),
+      new Promise<{ exited: false }>((r) => setTimeout(() => r({ exited: false }), 800)),
     ]);
-    if (exitCode !== 0) {
-      throw new Error(`Failed to open URL in ${browser}: ${stderr.trim() || stdout.trim()}`);
+    if (earlyExit.exited) {
+      const isSuccess = earlyExit.code === 0 || earlyExit.code === 21;
+      if (!isSuccess) {
+        throw new Error(`Failed to open URL in ${browser}: ${earlyExit.stderr.trim() || earlyExit.stdout.trim()}`);
+      }
+    } else {
+      proc.unref();
     }
     if (IS_RUNTIME_DEBUG) {
       log.info(`Opened URL in ${browser}`, { targetUrl, executable: exe });

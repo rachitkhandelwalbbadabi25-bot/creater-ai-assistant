@@ -3,7 +3,7 @@
 import { PersonalityProfile } from "../types";
 
 /**
- * PersonalityRenderer – Phase 1 implementation.
+ * PersonalityRenderer – Phase 1 implementation.
  * It takes a plain string response from the reasoning layer and decorates it
  * according to the current {@link PersonalityProfile}.  The logic is simple
  * and deterministic so that later phases can replace it with a richer LLM‑based

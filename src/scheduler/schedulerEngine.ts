@@ -168,10 +168,10 @@ export function syncFromDb(): void {
     for (const row of schedRows) {
       const existingTask = getTask(`job_${row.id}`);
       if (!existingTask) {
-        let wfTemplate: any;
-        try { if (row.workflow_template) wfTemplate = JSON.parse(row.workflow_template); } catch {}
-        let meta: any;
-        try { if (row.metadata) meta = JSON.parse(row.metadata); } catch {}
+        let wfTemplate: ScheduledJob["workflowTemplate"];
+        try { if (row.workflow_template) wfTemplate = JSON.parse(row.workflow_template) as ScheduledJob["workflowTemplate"]; } catch { /* ignore malformed workflow JSON */ }
+        let meta: ScheduledJob["metadata"];
+        try { if (row.metadata) meta = JSON.parse(row.metadata) as ScheduledJob["metadata"]; } catch { /* ignore malformed metadata JSON */ }
 
         const job: ScheduledJob = {
           id: row.id,

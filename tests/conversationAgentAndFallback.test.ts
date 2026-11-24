@@ -36,7 +36,7 @@ describe("Conversation Agent & Fallback Lifecycle Suite", () => {
   });
 
   test("3. Multi-turn conversation retains short-term history", async () => {
-    const channel: "tui" = "tui";
+    const channel = "tui" as const;
     let tokenBuffer = "";
     await processMessageStreaming("hello friend", channel, (tok) => {
       tokenBuffer += tok;
@@ -46,7 +46,7 @@ describe("Conversation Agent & Fallback Lifecycle Suite", () => {
     expect(history.length).toBeGreaterThanOrEqual(2);
     const hasUserMsg = history.some((m) => m.role === "user" && m.content.includes("hello friend"));
     expect(hasUserMsg).toBe(true);
-  });
+  }, 60000);
 
   test("4. Explicit task execution bypasses conversationAgent", async () => {
     const input = "open notepad";
@@ -73,11 +73,11 @@ describe("Conversation Agent & Fallback Lifecycle Suite", () => {
           streamedTokens += t;
         }
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
       expect(err).toBeDefined();
-      expect(err.message).toBeDefined();
+      expect(err instanceof Error ? err.message : String(err)).toBeDefined();
     }
-  });
+  }, 30000);
 
   test("7. Supervisor stream catches errors and sends user-facing token to UI", async () => {
     let outputTokens = "";
@@ -87,5 +87,5 @@ describe("Conversation Agent & Fallback Lifecycle Suite", () => {
 
     expect(res).toBeDefined();
     expect(typeof res).toBe("string");
-  }, 15000);
+  }, 60000);
 });

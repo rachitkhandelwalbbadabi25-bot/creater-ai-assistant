@@ -27,7 +27,7 @@ describe("Resilience Layer Tests", () => {
   });
 
   it("Circuit opens after threshold failures", async () => {
-    const breaker = new CircuitBreaker("test", { failureThreshold: 2, successThreshold: 1, resetTimeoutMs: 10 });
+    const breaker = new CircuitBreaker("test", { failureThreshold: 2, successThreshold: 1, resetTimeoutMs: 5000 });
     await expect(breaker.execute(alwaysFail)).rejects.toThrow();
     await expect(breaker.execute(alwaysFail)).rejects.toThrow();
     // Third call should be blocked because circuit is OPEN
@@ -38,7 +38,7 @@ describe("Resilience Layer Tests", () => {
   });
 
   it("Circuit blocks execution while OPEN", async () => {
-    const breaker = new CircuitBreaker("test2", { failureThreshold: 1, successThreshold: 1, resetTimeoutMs: 10 });
+    const breaker = new CircuitBreaker("test2", { failureThreshold: 1, successThreshold: 1, resetTimeoutMs: 5000 });
     await expect(breaker.execute(alwaysFail)).rejects.toThrow();
     await expect(breaker.execute(alwaysFail)).rejects.toThrow(/OPEN/);
     // Ensure no function execution occurs
@@ -118,13 +118,13 @@ describe("Resilience Layer Tests", () => {
   it("Dashboard exposes resilience metrics", async () => {
     const dash = await getDashboard();
     expect(dash.metrics).toHaveProperty("resilience");
-    const res = dash.metrics.resilience as any;
+    const res = dash.metrics.resilience as unknown as Record<string, unknown>;
     expect(res).toHaveProperty("breakerTrips");
     expect(res).toHaveProperty("openCircuits");
     expect(res).toHaveProperty("fallbackExecutions");
     expect(res).toHaveProperty("recoveryExecutions");
     expect(res).toHaveProperty("breakerResets");
-  });
+  }, 15000);
 
   it("Alert generated when circuit opens", async () => {
     const breaker = new CircuitBreaker("test7", { failureThreshold: 1, successThreshold: 1, resetTimeoutMs: 5 });

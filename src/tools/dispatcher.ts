@@ -73,7 +73,7 @@ const FAST_TOOLS: Record<string, ToolHandler> = {
       channel: (params.channel as string) || "tui",
     });
   },
-  "reminder.list": async (params) => {
+  "reminder.list": async () => {
     const reminderTools = await import("../scheduler/reminderTools.js");
     return reminderTools.listReminders();
   },
@@ -137,15 +137,19 @@ const FAST_TOOLS: Record<string, ToolHandler> = {
   },
   "mcp.pipeline": async (params) => {
     const { mcpCoordinator } = await import("../mcp/coordinator.js");
-    return mcpCoordinator.executePipeline(params.steps as any);
+    return mcpCoordinator.executePipeline(params.steps as Parameters<typeof mcpCoordinator.executePipeline>[0]);
   },
   "cua.execute": async (params) => {
     const { advancedCuaEngine } = await import("../cua/cuaEngine.js");
-    return advancedCuaEngine.execute(params as any);
+    return advancedCuaEngine.execute(params as unknown as Parameters<typeof advancedCuaEngine.execute>[0]);
   },
   "cua.click": async (params) => {
     const { clickDesktop } = await import("./laptop/desktopControl.js");
-    return clickDesktop(params.x as number, params.y as number, (params.button as any) || "left");
+    return clickDesktop(
+      params.x as number,
+      params.y as number,
+      (params.button as "left" | "right" | "middle" | "double") || "left"
+    );
   },
   "cua.type": async (params) => {
     const { typeDesktopText } = await import("./laptop/desktopControl.js");
@@ -245,7 +249,8 @@ const HEAVY_TOOL_LOADERS: Record<string, () => Promise<ToolHandler>> = {
     return (params) => computerTools.playYouTube(
       params.query as string,
       (params.action as "play" | "search") || "play",
-      (params.selection as "first") || "first"
+      (params.selection as "first") || "first",
+      params.comment as string | undefined
     );
   },
   "computer.close_browser": async () => {

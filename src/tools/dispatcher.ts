@@ -250,7 +250,9 @@ const HEAVY_TOOL_LOADERS: Record<string, () => Promise<ToolHandler>> = {
       params.query as string,
       (params.action as "play" | "search") || "play",
       (params.selection as "first") || "first",
-      params.comment as string | undefined
+      params.comment as string | undefined,
+      params.approved as boolean | undefined,
+      (params.mediaSubtype as import("./laptop/youtubeIntelligence.js").YouTubeMediaSubtype) || "video"
     );
   },
   "computer.close_browser": async () => {

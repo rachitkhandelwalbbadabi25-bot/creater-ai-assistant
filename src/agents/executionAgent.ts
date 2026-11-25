@@ -5,11 +5,14 @@ import { createLogger } from "@utils/logger.js";
 import type { AgentSharedContext } from "../orchestration/agentSharedContext.js";
 import type { AgentResult } from "../orchestration/agentBus.js";
 import { browserSessionManager } from "../mcp/browser/sessionManager.js";
+import { executeUniversalPlan } from "../orchestration/universalExecutor.js";
+import type { UniversalExecutionPlan } from "../orchestration/universalPlan.js";
 
 export interface ExecutionOutput {
   success: boolean;
   stepsExecuted: string[];
   outputs: any[];
+  universalPlan?: UniversalExecutionPlan;
 }
 
 const log = createLogger("[EXECUTION]");
@@ -22,11 +25,54 @@ export async function executionAgent(
   console.log("[BROWSER_WORKFLOW_START]");
   log.info("[LLM_CALL] none (executionAgent)");
   const planner = (context as any).plannerAgentOutput as any;
+  const universalPlan = planner?.universalPlan as UniversalExecutionPlan | undefined;
+
+  // Wire Universal Execution Engine whenever a structured multi-action UniversalExecutionPlan is present
+  if (universalPlan && Array.isArray(universalPlan.actions) && universalPlan.actions.length > 0) {
+    const isGenericFallbackOnly =
+      universalPlan.actions.length === 1 && universalPlan.actions[0]?.type === "task.execute_step";
+    if (!isGenericFallbackOnly) {
+      const execRes = await executeUniversalPlan(universalPlan, {
+        channel: "tui",
+        sessionId: context.requestId,
+      });
+      const mappedOutputs = execRes.plan.actions.map((a) => ({
+        step: a.expectedOutcome,
+        actionId: a.id,
+        type: a.type,
+        status:
+          a.status === "completed"
+            ? "success"
+            : a.status === "awaiting_approval"
+              ? "awaiting_approval"
+              : a.status === "skipped"
+                ? "skipped"
+                : "error",
+        verified: Boolean(a.evidence?.verified),
+        evidence: a.evidence,
+        detail: a.evidence?.observed || a.error || a.expectedOutcome,
+        error: a.error,
+      }));
+      const output: ExecutionOutput = {
+        success: execRes.success,
+        stepsExecuted: execRes.plan.actions.map((a) => a.type),
+        outputs: mappedOutputs,
+        universalPlan: execRes.plan,
+      };
+      logPerf(log, "Universal plan execution completed", started, {
+        actionsCount: execRes.plan.actions.length,
+        overallStatus: execRes.plan.overallStatus,
+      });
+      return { result: output, metadata: { timingMs: nowMs() - started } };
+    }
+  }
+
   const steps: string[] = planner?.steps ?? [];
 
   const outputs: any[] = [];
   const stepsExecuted: string[] = [];
   let tabId: string | null = null;
+  let hadFailure = false;
 
   try {
     for (const step of steps) {
@@ -39,7 +85,7 @@ export async function executionAgent(
         log.info('[TOOL_DISPATCH]', { tool: "openPage" });
         tabId = await browserSessionManager.openPage();
         log.info('[PLAYWRIGHT_START]');
-        outputs.push({ step, status: "success", detail: "Browser window opened" });
+        outputs.push({ step, status: "success", verified: true, detail: "Browser window opened" });
       } else if (stepLower.includes("navigate") || stepLower.includes("google")) {
         if (!tabId) {
           log.info('[TOOL_SELECTED]', { tool: "openPage" });
@@ -56,7 +102,7 @@ export async function executionAgent(
         log.info('[TOOL_DISPATCH]', { tool: "navigate", url });
         log.info('[PAGE_GOTO]', { url });
         await browserSessionManager.navigate(tabId, url);
-        outputs.push({ step, status: "success", detail: `Navigated to ${url}` });
+        outputs.push({ step, status: "success", verified: true, url, detail: `Navigated to ${url}` });
       } else if (stepLower.includes("search") || stepLower.includes("look up")) {
         if (!tabId) {
           log.info('[TOOL_SELECTED]', { tool: "openPage" });
@@ -83,7 +129,7 @@ export async function executionAgent(
         log.info('[TOOL_DISPATCH]', { tool: "search", query });
         await browserSessionManager.search(tabId, query);
         log.info('[SEARCH_EXECUTED]', { query });
-        outputs.push({ step, status: "success", detail: `Searched for ${query}` });
+        outputs.push({ step, status: "success", verified: true, query, detail: `Searched for ${query}` });
       } else if (stepLower.includes("extract") || stepLower.includes("summary") || stepLower.includes("findings")) {
         if (!tabId) {
           throw new Error("No active browser tab to extract text from");
@@ -93,22 +139,29 @@ export async function executionAgent(
         const text = await browserSessionManager.extractText(tabId);
         log.info('[SUMMARY_EXTRACTED]');
         const summary = text.split("\n").map(l => l.trim()).filter(Boolean).slice(0, 10).join("\n");
-        outputs.push({ step, status: "success", detail: summary });
+        outputs.push({ step, status: "success", verified: summary.length > 0, detail: summary });
       } else {
-        outputs.push({ step, status: "success", detail: "Step completed" });
+        outputs.push({
+          step,
+          status: "success",
+          verified: false,
+          detail: `Step executed (unverified): ${step}`,
+        });
       }
     }
   } catch (error: any) {
+    hadFailure = true;
     log.error("Execution failed", error);
-    outputs.push({ status: "error", error: error.message });
+    outputs.push({ status: "error", verified: false, error: error.message });
   } finally {
     if (tabId) {
       await browserSessionManager.closeTab(tabId).catch(() => {});
     }
   }
 
+  const allSucceeded = !hadFailure && outputs.length > 0 && outputs.every((o) => o.status === "success");
   const output: ExecutionOutput = {
-    success: true,
+    success: allSucceeded,
     stepsExecuted,
     outputs,
   };

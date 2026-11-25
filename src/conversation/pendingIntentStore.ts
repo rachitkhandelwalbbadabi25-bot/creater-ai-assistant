@@ -18,9 +18,38 @@ export interface PendingReminderIntent {
   createdAt: number;
 }
 
+export type ActionApprovalLifecycleState =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "cancelled"
+  | "expired"
+  | "modified";
+
+export interface PendingActionApproval {
+  intent: "ACTION_APPROVAL";
+  actionType: string;
+  platform: string;
+  target: string;
+  targetUrl?: string;
+  targetTitle?: string;
+  params: Record<string, unknown>;
+  approvalState: ActionApprovalLifecycleState;
+  expiresAt: number;
+  createdAt: number;
+  requiredField?: "CONTENT" | "TIME";
+  collectedFields?: {
+    title?: string;
+    timeInput?: string;
+    scheduledAt?: string | number;
+    [key: string]: unknown;
+  };
+}
+
 export type PendingIntent = PendingReminderIntent;
 
 const store = new Map<string, PendingIntent>();
+const approvalStore = new Map<string, PendingActionApproval>();
 
 /** Max age for a pending intent before it automatically expires (5 minutes) */
 const PENDING_INTENT_TTL_MS = 5 * 60 * 1000;
@@ -34,7 +63,6 @@ export function getPendingIntent(channel: string = "tui"): PendingIntent | undef
   const pending = store.get(channel);
   if (!pending) return undefined;
 
-  // Expire if older than TTL
   if (Date.now() - pending.createdAt > PENDING_INTENT_TTL_MS) {
     store.delete(channel);
     log.info("Expired pending intent", { channel, intent: pending.intent });
@@ -42,6 +70,40 @@ export function getPendingIntent(channel: string = "tui"): PendingIntent | undef
   }
 
   return pending;
+}
+
+function buildApprovalKey(channel: string = "tui", sessionId?: string): string {
+  return sessionId ? `${channel}:${sessionId}` : channel;
+}
+
+export function setPendingActionApproval(
+  channel: string = "tui",
+  pending: PendingActionApproval,
+  sessionId?: string
+): void {
+  const key = buildApprovalKey(channel, sessionId);
+  approvalStore.set(key, pending);
+  log.info("Set pending action approval", { channel: key, actionType: pending.actionType, target: pending.target });
+}
+
+export function getPendingActionApproval(channel: string = "tui", sessionId?: string): PendingActionApproval | undefined {
+  const key = buildApprovalKey(channel, sessionId);
+  const pending = approvalStore.get(key);
+  if (!pending) return undefined;
+  if (Date.now() > pending.expiresAt) {
+    approvalStore.delete(key);
+    log.info("Expired pending action approval", { channel: key, actionType: pending.actionType });
+    return undefined;
+  }
+  return pending;
+}
+
+export function clearPendingActionApproval(channel: string = "tui", sessionId?: string): void {
+  const key = buildApprovalKey(channel, sessionId);
+  if (approvalStore.has(key)) {
+    approvalStore.delete(key);
+    log.info("Cleared pending action approval", { channel: key });
+  }
 }
 
 export function clearPendingIntent(channel: string = "tui"): void {
@@ -128,3 +190,57 @@ export function cleanPendingReminderContent(input: string): string {
 
   return cleaned;
 }
+
+export function isExplicitApproval(input: string): boolean {
+  const normalized = input.trim().toLowerCase().replace(/[!?.,]+$/g, "");
+  return /^(?:yes|yep|yeah|ok|okay|sure|approve|approved|confirm|confirmed|go ahead|post it|send it|submit|do it|haan|ha|kar do|bhej do)$/i.test(
+    normalized
+  );
+}
+
+export function isExplicitRejection(input: string): boolean {
+  const normalized = input.trim().toLowerCase().replace(/[!?.,]+$/g, "");
+  return /^(?:no|nope|reject|rejected|decline|deny|don'?t send|don'?t post|don'?t comment|mat bhejo|mat karo)$/i.test(
+    normalized
+  );
+}
+
+export function extractApprovalModification(input: string): string | undefined {
+  const match = input
+    .trim()
+    .match(/^(?:change|edit|update|modify)\s+(?:the\s+)?(?:comment|message|text)(?:\s+to)?\s*[:-]?\s*["'“]?(.+?)["'”]?$/i);
+  return match && match[1]?.trim() ? match[1].trim() : undefined;
+}
+
+export function revalidatePendingApproval(
+  pending: PendingActionApproval,
+  currentTargetUrl?: string,
+  currentParams?: Record<string, unknown>
+): { valid: boolean; reason?: string; state: ActionApprovalLifecycleState } {
+  if (Date.now() > pending.expiresAt) {
+    return { valid: false, reason: "Approval expired.", state: "expired" };
+  }
+  if (currentTargetUrl && pending.targetUrl && currentTargetUrl !== pending.targetUrl) {
+    return {
+      valid: false,
+      reason: `Target changed from "${pending.targetUrl}" to "${currentTargetUrl}". Renewed approval required.`,
+      state: "modified",
+    };
+  }
+  if (
+    currentParams?.commentText &&
+    pending.params.commentText &&
+    String(currentParams.commentText) !== String(pending.params.commentText)
+  ) {
+    return {
+      valid: false,
+      reason: "Comment text changed. Renewed approval required.",
+      state: "modified",
+    };
+  }
+  if (pending.approvalState !== "approved") {
+    return { valid: false, reason: `Approval state is ${pending.approvalState}.`, state: pending.approvalState };
+  }
+  return { valid: true, state: "approved" };
+}
+

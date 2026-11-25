@@ -90,15 +90,71 @@ async function updateMetricsInBackground() {
   }
 }
 
-// Run background update loop
-setInterval(updateMetricsInBackground, 30000);
-updateMetricsInBackground();
+let metricsTimer: ReturnType<typeof setInterval> | null = null;
+
+function ensureMetricsLoopStarted(): void {
+  if (!metricsTimer) {
+    metricsTimer = setInterval(updateMetricsInBackground, 30000);
+    if (typeof metricsTimer.unref === "function") {
+      metricsTimer.unref();
+    }
+    void updateMetricsInBackground();
+  }
+}
 
 export async function getSystemInfo(): Promise<SystemSnapshot> {
+  ensureMetricsLoopStarted();
   return cachedSnapshot;
 }
 
 export async function getProcesses(topN = 10): Promise<Array<{ name: string; cpu: number; mem: number; pid: number }>> {
+  if (process.platform === "win32") {
+    try {
+      const proc = Bun.spawn(["tasklist", "/FO", "CSV", "/NH"], {
+        stdout: "pipe",
+        stderr: "pipe",
+        windowsHide: true,
+      });
+      const timer = setTimeout(() => {
+        try {
+          proc.kill();
+        } catch {
+          /* ignore */
+        }
+      }, 4000);
+      const stdout = await new Response(proc.stdout).text();
+      await proc.exited;
+      clearTimeout(timer);
+
+      const parsed: Array<{ name: string; cpu: number; mem: number; pid: number }> = [];
+      for (const line of stdout.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('"')) continue;
+        // Format: "Image Name","PID","Session Name","Session#","Mem Usage"
+        const cols = trimmed.slice(1, -1).split('","');
+        if (cols.length < 5) continue;
+        const name = cols[0] || "";
+        const pid = parseInt(cols[1] || "0", 10);
+        const memKb = parseInt((cols[4] || "0").replace(/[^0-9]/g, ""), 10);
+        if (!Number.isNaN(pid) && pid > 0) {
+          parsed.push({
+            name,
+            cpu: 0,
+            mem: Math.round((memKb / 1024) * 10) / 10,
+            pid,
+          });
+        }
+      }
+      if (parsed.length > 0) {
+        return parsed.sort((a, b) => b.mem - a.mem).slice(0, topN);
+      }
+    } catch (winErr) {
+      log.warn("Fast tasklist process query failed, falling back to systeminformation", {
+        error: winErr instanceof Error ? winErr.message : String(winErr),
+      });
+    }
+  }
+
   try {
     const si = (await import("systeminformation")).default;
     const procs = await si.processes();

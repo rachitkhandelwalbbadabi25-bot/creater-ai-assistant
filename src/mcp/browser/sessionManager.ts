@@ -14,6 +14,9 @@ class BrowserSessionManager {
       console.log('[BROWSER_SESSION_IDLE_AUTO_CLEANUP]');
       this.cleanupAll().catch(() => {});
     }, this.IDLE_TIMEOUT_MS);
+    if (typeof this.idleTimer.unref === 'function') {
+      this.idleTimer.unref();
+    }
   }
 
   async openTab(options?: { preferCDP?: boolean; keepOpen?: boolean }): Promise<string> {
@@ -119,6 +122,11 @@ class BrowserSessionManager {
       // ignore cleanup errors
     }
     this.tabs.delete(tabId);
+
+    if (this.tabs.size === 0 && this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
   }
 
   async cleanupAll(): Promise<void> {

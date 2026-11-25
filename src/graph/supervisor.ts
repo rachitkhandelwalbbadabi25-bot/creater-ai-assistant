@@ -125,9 +125,14 @@ function getDeterministicConversationReply(input: string): string | null {
   return replies[normalized] ?? null;
 }
 
-function persistDeterministicConversation(input: string, response: string, channel: GraphState["channel"]): void {
-  addMessage("user", input, channel, { intent: "conversation" });
-  addMessage("assistant", response, channel);
+function persistDeterministicConversation(
+  input: string,
+  response: string,
+  channel: GraphState["channel"],
+  sessionId?: string
+): void {
+  addMessage("user", input, channel, { intent: "conversation", sessionId });
+  addMessage("assistant", response, channel, { intent: "conversation", sessionId });
 }
 
 async function routeConversationalState(state: GraphState): Promise<GraphState> {
@@ -203,11 +208,71 @@ async function resolvePendingIntentIfPresent(
 ): Promise<string | null> {
   const {
     getPendingIntent,
+    getPendingActionApproval,
+    setPendingActionApproval,
+    clearPendingActionApproval,
     clearPendingIntent,
     isExplicitCancellation,
+    isExplicitApproval,
+    isExplicitRejection,
+    extractApprovalModification,
     isExplicitCommandOverride,
     cleanPendingReminderContent,
   } = await import("../conversation/pendingIntentStore.js");
+
+  const pendingApproval = getPendingActionApproval(channel);
+  if (pendingApproval) {
+    if (isExplicitCancellation(input) || isExplicitRejection(input)) {
+      clearPendingActionApproval(channel);
+      const cancelMsg = `🛑 Cancelled pending ${pendingApproval.actionType} on "${pendingApproval.targetTitle || pendingApproval.target}".`;
+      persistDeterministicConversation(input, cancelMsg, channel);
+      onToken?.(cancelMsg);
+      return cancelMsg;
+    }
+
+    const modifiedText = extractApprovalModification(input);
+    if (modifiedText) {
+      setPendingActionApproval(channel, {
+        ...pendingApproval,
+        params: { ...pendingApproval.params, commentText: modifiedText },
+        approvalState: "modified",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 5 * 60 * 1000,
+      });
+      const modMsg = `Updated text to "${modifiedText}". Reply "yes" or "approve" to publish on "${pendingApproval.targetTitle || pendingApproval.target}", or "cancel" to abort.`;
+      persistDeterministicConversation(input, modMsg, channel);
+      onToken?.(modMsg);
+      return modMsg;
+    }
+
+    if (isExplicitApproval(input)) {
+      if (pendingApproval.params.planId) {
+        const { resumePausedPlan } = await import("../orchestration/universalExecutor.js");
+        const resumed = await resumePausedPlan(channel, "approved");
+        if (resumed) {
+          persistDeterministicConversation(input, resumed.summary, channel);
+          onToken?.(resumed.summary);
+          return resumed.summary;
+        }
+      }
+      clearPendingActionApproval(channel);
+      if (pendingApproval.actionType === "youtube.comment") {
+        const { dispatchTool } = await import("../tools/dispatcher.js");
+        const commentText = String(pendingApproval.params.commentText || "");
+        const res = (await dispatchTool("computer.play_youtube", {
+          query: pendingApproval.targetTitle || pendingApproval.target,
+          action: "play",
+          comment: commentText,
+          approved: true,
+          mediaSubtype: pendingApproval.params.mediaSubtype || "video",
+        })) as string | { message?: string };
+        const msg = typeof res === "string" ? res : res?.message || `Submitted comment "${commentText}".`;
+        persistDeterministicConversation(input, msg, channel);
+        onToken?.(msg);
+        return msg;
+      }
+    }
+  }
 
   const pending = getPendingIntent(channel);
   if (!pending) return null;
@@ -271,6 +336,7 @@ export async function processMessageStreaming(
   input: string,
   channel: GraphState["channel"] = "tui",
   onToken?: (token: string) => void,
+  sessionId?: string,
 ): Promise<string> {
   const requestId = `stream-${Date.now()}`;
   console.log("[MODULE_INSTANCE]", { file: "supervisor.ts", event: "start", id: MODULE_INSTANCE_ID, requestId });
@@ -290,7 +356,7 @@ export async function processMessageStreaming(
     return pendingResolved;
   }
 
-  let state: GraphState = createInitialState(input, channel);
+  let state: GraphState = createInitialState(input, channel, sessionId);
   try {
     state.onToken = onToken;
     if (IS_RUNTIME_DEBUG) {
@@ -303,7 +369,7 @@ export async function processMessageStreaming(
       state.intent = IntentEnum.CONVERSATION;
       state.targetAgent = "deterministic";
       state.currentStep = "done";
-      persistDeterministicConversation(input, deterministicReply, channel);
+      persistDeterministicConversation(input, deterministicReply, channel, sessionId);
       onToken?.(deterministicReply);
       logPerf(log, "processMessageStreaming completed", startTime, {
         agent: state.targetAgent,
@@ -366,6 +432,7 @@ export async function processMessageStreaming(
 export async function processMessage(
   input: string,
   channel: GraphState["channel"] = "tui",
+  sessionId?: string,
 ): Promise<string> {
   const requestId = `msg-${Date.now()}`;
   console.log("[MODULE_INSTANCE]", { file: "supervisor.ts", event: "start", id: MODULE_INSTANCE_ID, requestId });
@@ -389,7 +456,7 @@ export async function processMessage(
     let state: GraphState | undefined;
     try {
       // Initialize the graph state before routing
-      state = createInitialState(input, channel);
+      state = createInitialState(input, channel, sessionId);
 
       if (IS_RUNTIME_DEBUG) {
         log.info(`Processing: "${input.slice(0, 80)}..." [${channel}]`);
@@ -401,7 +468,7 @@ export async function processMessage(
         state.intent = IntentEnum.CONVERSATION;
         state.targetAgent = "deterministic";
         state.currentStep = "done";
-        persistDeterministicConversation(input, deterministicReply, channel);
+        persistDeterministicConversation(input, deterministicReply, channel, sessionId);
         logPerf(log, "processMessage completed", startTime, {
           agent: state.targetAgent,
           intent: state.intent,
@@ -470,7 +537,7 @@ export async function processMessage(
       tracer.endTrace(trace.id, "completed");
       return state.response;
     } catch (error) {
-      tracer.endTrace(trace.id, "failed", (error as any)?.message || String(error));
+      tracer.endTrace(trace.id, "failed", error instanceof Error ? error.message : String(error));
       log.error("Pipeline error", error);
       return formatErrorForUser(error);
     } finally {

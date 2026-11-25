@@ -4,6 +4,8 @@ const log = createLogger("graph/commandRouter");
 
 import { FactCategory } from "../memory/longTerm.js";
 import { parseMemoryStoreInput, isMemoryListInput, parseMemoryQueryInput } from "../memory/memoryParser.js";
+import { normalizeYouTubeSearchQuery } from "../orchestration/universalPlan.js";
+import type { YouTubeMediaSubtype } from "../tools/laptop/youtubeIntelligence.js";
 
 export type FastCommand =
   | { kind: "open_app"; raw: string; app: string }
@@ -12,7 +14,17 @@ export type FastCommand =
   | { kind: "open_downloads"; raw: string; path: string }
   | { kind: "close_app"; raw: string; app: string }
   | { kind: "browser_home"; raw: string }
-  | { kind: "youtube"; raw: string; action: "play" | "search"; query?: string; selection?: "first"; comment?: string }
+  | {
+      kind: "youtube";
+      raw: string;
+      action: "play" | "search" | "comment";
+      query?: string;
+      selection?: "first";
+      comment?: string;
+      mediaSubtype?: YouTubeMediaSubtype;
+      subscribe?: boolean;
+      commentOnly?: boolean;
+    }
   | { kind: "reminder"; raw: string; action: "create" | "list" | "cancel" | "query"; title?: string; timeInput?: string; query?: string; queryType?: "latest" | "all" }
   | { kind: "volume"; raw: string; direction: "up" | "down" | "mute" | "unmute" | "set"; value?: number }
   | { kind: "screenshot"; raw: string }
@@ -79,7 +91,15 @@ const DETERMINISTIC_COMMAND_MAP: Record<string, FastCommand> = {
 
 export function parseYouTubeCommand(
   input: string
-): { action: "play" | "search"; query?: string; selection?: "first"; comment?: string } | null {
+): {
+  action: "play" | "search" | "comment";
+  query?: string;
+  selection?: "first";
+  comment?: string;
+  mediaSubtype?: YouTubeMediaSubtype;
+  subscribe?: boolean;
+  commentOnly?: boolean;
+} | null {
   const raw = input.trim();
   if (!raw) return null;
 
@@ -88,21 +108,50 @@ export function parseYouTubeCommand(
 
   const isExplicitYouTube = /\byoutube\b/i.test(raw);
   const isVideoKeyword = /\b(video|videos|result|results)\b/i.test(raw);
+  const isLivestreamKeyword = /\b(livestream|live\s*stream|livestreaming|live\s*streaming|stream|broadcast|replay)\b/i.test(raw);
   const isPlayAction = /\b(play|chala|chalao)\b/i.test(raw);
   const isSearchAction = /\b(search|find|show\s+me)\b/i.test(raw);
+  const isCommentAction = /\b(?:comment|write\s+a?\s*comment|post\s+a?\s*comment|leave\s+a?\s*comment)\b/i.test(raw);
   const isSelectionPhrase = /\b(first|top|pehli|pehla|sabse\s+pehli|sabse\s+pehla)\b/i.test(raw);
 
   if (
     !isExplicitYouTube &&
-    !(isVideoKeyword && (isPlayAction || isSearchAction || /\b(ki|ka)\b/i.test(raw))) &&
+    !isLivestreamKeyword &&
+    !(isVideoKeyword && (isPlayAction || isSearchAction || isCommentAction || /\b(ki|ka)\b/i.test(raw))) &&
     !isSelectionPhrase
   ) {
     return null;
   }
 
-  // Determine action: SEARCH vs PLAY
-  let action: "play" | "search" = "play";
-  if (
+  // Detect negated comment instruction ("Play the video but don't comment")
+  const hasNegatedComment = /\b(?:don'?t|do\s+not|without|skip|mat|na)\s+(?:add\s+a?\s*)?(?:comment|commenting)\b/i.test(raw);
+  const hasSubscribe = /\b(?:and|then|aur)\s+(?:please\s+)?subscribe\b/i.test(raw);
+
+  // Determine media subtype
+  const mediaSubtype: YouTubeMediaSubtype = /\b(currently\s+live|live\s+now|right\s+now\s+live|abhi\s+live|ongoing\s+live)\b/i.test(raw)
+    ? "currently_live"
+    : /\b(replay|completed\s+livestream|past\s+livestream|recorded\s+livestream)\b/i.test(raw)
+      ? "livestream_replay"
+      : isLivestreamKeyword || /\bstream\b/i.test(raw)
+        ? "latest_livestream"
+        : /\b(latest|newest|recent)\b/i.test(raw)
+          ? "latest_video"
+          : "video";
+
+  // Check standalone comment command (e.g. "now comment on latest livestreaming of carryminati now on youtube that carry bhai big fan"
+  // or "Comment Carry bhai big fan on this video")
+  const isStandaloneComment =
+    !hasNegatedComment &&
+    isCommentAction &&
+    !/\b(play|watch|search|find|chala|chalao)\b/i.test(
+      raw.replace(/\bcomment\b[\s\S]*$/i, "")
+    );
+
+  // Determine action: COMMENT vs SEARCH vs PLAY
+  let action: "play" | "search" | "comment" = "play";
+  if (isStandaloneComment) {
+    action = "comment";
+  } else if (
     /^(search|find|show\s+me)\b/i.test(raw) ||
     /\byoutube\s+search\b/i.test(raw) ||
     /\bsearch\s+.*on\s+youtube\b/i.test(raw)
@@ -110,27 +159,32 @@ export function parseYouTubeCommand(
     action = "search";
   }
 
-  // Extract optional trailing comment clause (e.g. 'and comment "hello" on their video now')
+  // Extract comment text (handles both "and comment ..." and standalone "comment ... that ...")
   let comment: string | undefined;
-  const commentClauseMatch = raw.match(
-    /\s+(?:and|then|aur)\s+(?:please\s+)?(?:comment|write\s+a?\s*comment|post\s+a?\s*comment|leave\s+a?\s*comment|reply)\b\s*([\s\S]+)$/i
-  );
-  if (commentClauseMatch && commentClauseMatch[1]) {
-    const clauseBody = commentClauseMatch[1].trim();
-    const quotedComment = clauseBody.match(/["'“](.+?)["'”]/);
-    if (quotedComment && quotedComment[1].trim()) {
-      comment = quotedComment[1].trim();
-    } else {
-      const cleanedComment = clauseBody
-        .replace(
-          /\s+(?:on|in|under|to|pe|par)\s+(?:their|thier|the|this|that|his|her|its|video|videos|youtube|it|post)\b[\s\S]*$/i,
-          ""
-        )
-        .replace(/\s+(?:comment\s*)?(?:kar|karo|kar\s*do|de|do|now|abhi|ab|bhai|bro|yaar|please)+$/i, "")
-        .replace(/^["'“]|["'”]$/g, "")
-        .trim();
-      if (cleanedComment) {
-        comment = cleanedComment;
+  if (!hasNegatedComment) {
+    const commentClauseMatch = raw.match(
+      /(?:^|\s+(?:and|then|aur)\s+)(?:(?:ok|okay|now|abhi|ab|please)\s+)*(?:comment|write\s+a?\s*comment|post\s+a?\s*comment|leave\s+a?\s*comment|reply)\b\s*([\s\S]+)$/i
+    );
+    if (commentClauseMatch && commentClauseMatch[1]) {
+      const clauseBody = commentClauseMatch[1].trim();
+      const quotedComment = clauseBody.match(/["'“](.+?)["'”]/);
+      const thatMatch = !quotedComment ? clauseBody.match(/\bthat\s+(.+)$/i) : null;
+      if (quotedComment && quotedComment[1].trim()) {
+        comment = quotedComment[1].trim();
+      } else if (thatMatch && thatMatch[1].trim()) {
+        comment = thatMatch[1].replace(/\s+(?:on\s+youtube|now|abhi|ab|please)$/i, "").trim();
+      } else {
+        const cleanedComment = clauseBody
+          .replace(
+            /\s+(?:on|in|under|to|pe|par)\s+(?:their|thier|the|this|that|his|her|its|video|videos|livestream|stream|youtube|it|post)\b[\s\S]*$/i,
+            ""
+          )
+          .replace(/\s+(?:comment\s*)?(?:kar|karo|kar\s*do|de|do|now|abhi|ab|bhai|bro|yaar|please)+$/i, "")
+          .replace(/^["'“]|["'”.,!?]+$/g, "")
+          .trim();
+        if (cleanedComment) {
+          comment = cleanedComment;
+        }
       }
     }
   }
@@ -150,7 +204,35 @@ export function parseYouTubeCommand(
     };
   }
 
+  if (isStandaloneComment) {
+    // If referencing "this video", keep query undefined so active target is used; otherwise extract target query
+    const isThisVideoRef = /\bthis\s+video\b/i.test(raw);
+    let targetQuery: string | undefined;
+    if (!isThisVideoRef) {
+      const targetPart = raw
+        .replace(/^(?:(?:ok|okay|now|abhi|ab|please)\s+)*(?:comment|write\s+a?\s*comment|post\s+a?\s*comment|leave\s+a?\s*comment)\s+(?:on|in|under|to)\s+/i, "")
+        .replace(/\bthat\s+[\s\S]+$/i, "")
+        .trim();
+      const cleanedTarget = normalizeYouTubeSearchQuery(targetPart, mediaSubtype);
+      if (cleanedTarget && !/^(?:this|that|the|video)$/i.test(cleanedTarget)) {
+        targetQuery = cleanedTarget;
+      }
+    }
+    return {
+      action: "comment",
+      ...(targetQuery ? { query: targetQuery } : {}),
+      ...(comment ? { comment } : {}),
+      mediaSubtype,
+      commentOnly: true,
+    };
+  }
+
   let query = raw;
+
+  // Strip negated comment suffix (e.g. "but don't comment")
+  query = query
+    .replace(/\s+(?:but|and)\s+(?:don'?t|do\s+not|never)\s+(?:add\s+a?\s*)?(?:comment|commenting)\b[\s\S]*$/i, "")
+    .replace(/\s+without\s+commenting\b[\s\S]*$/i, "");
 
   // Strip trailing secondary clauses such as "and comment 'hello' on their video now", "and like the video", "and subscribe"
   query = query.replace(
@@ -192,12 +274,24 @@ export function parseYouTubeCommand(
   // Clean any residual leading verb or connectors
   query = query.replace(/^(?:and\s+)?(?:play|search|find|show\s+me|of)\s+/i, "").trim();
 
+  // For livestream / replay intents, normalize the search query cleanly
+  if (query && (mediaSubtype === "currently_live" || mediaSubtype === "latest_livestream" || mediaSubtype === "livestream_replay")) {
+    const normalizedYt = normalizeYouTubeSearchQuery(query, mediaSubtype);
+    if (normalizedYt) {
+      query = normalizedYt;
+    }
+  }
+
+  const exposeSubtype = mediaSubtype !== "video" && mediaSubtype !== "latest_video";
+
   if (!query || query.toLowerCase() === "youtube") {
     return {
       action,
       query: undefined,
       ...(action === "play" ? { selection: "first" as const } : {}),
       ...(comment ? { comment } : {}),
+      ...(exposeSubtype ? { mediaSubtype } : {}),
+      ...(hasSubscribe ? { subscribe: true } : {}),
     };
   }
 
@@ -206,6 +300,8 @@ export function parseYouTubeCommand(
     query,
     ...(action === "play" ? { selection: "first" as const } : {}),
     ...(comment ? { comment } : {}),
+    ...(exposeSubtype ? { mediaSubtype } : {}),
+    ...(hasSubscribe ? { subscribe: true } : {}),
   };
 }
 
@@ -815,6 +911,9 @@ export function routeFastCommand(input: string): FastCommand | null {
       ...(ytParsed.query ? { query: ytParsed.query } : {}),
       ...(ytParsed.selection ? { selection: ytParsed.selection } : {}),
       ...(ytParsed.comment ? { comment: ytParsed.comment } : {}),
+      ...(ytParsed.mediaSubtype ? { mediaSubtype: ytParsed.mediaSubtype } : {}),
+      ...(ytParsed.subscribe ? { subscribe: ytParsed.subscribe } : {}),
+      ...(ytParsed.commentOnly ? { commentOnly: ytParsed.commentOnly } : {}),
     };
   }
 

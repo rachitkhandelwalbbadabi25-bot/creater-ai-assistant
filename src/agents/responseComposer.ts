@@ -49,10 +49,25 @@ export async function responseComposer(
     const execution = (context as any).executionAgentOutput;
     const verifier = (context as any).verifierAgentOutput;
 
+    if (execution?.universalPlan) {
+      const { formatPlanExecutionSummary } = await import("../orchestration/universalPlan.js");
+      const planSummary = formatPlanExecutionSummary(execution.universalPlan);
+      log.info("[RESPONSE_COMPOSER] returning deterministic universalPlan summary");
+      return {
+        result: planSummary,
+        metadata: { timingMs: nowMs() - composerStart },
+      };
+    }
+
     const stepsExecutedCount = execution?.stepsExecuted?.length ?? 0;
-    const executionFailed = execution?.status === "failed" || stepsExecutedCount === 0;
+    const verifierIssues: string[] = Array.isArray(verifier?.issues) ? verifier.issues : [];
+    const executionFailed =
+      execution?.success === false ||
+      execution?.status === "failed" ||
+      stepsExecutedCount === 0 ||
+      verifier?.success === false;
     const guardConstraint = executionFailed
-      ? "CRITICAL CONSTRAINT: Execution failed or no tool executed. Do NOT claim that any real-world action, file operation, launch, or system command succeeded."
+      ? `CRITICAL CONSTRAINT: Execution failed, was incomplete, or failed verification (${verifierIssues.join("; ") || "unknown"}). Do NOT claim that the full workflow succeeded.`
       : "Confirm success only for verified executed actions.";
 
     // Build compact prompt

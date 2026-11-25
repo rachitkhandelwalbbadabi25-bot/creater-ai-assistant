@@ -215,12 +215,29 @@ export async function waitForElement(selector: string, timeout: number = 5000): 
 
 // ─── YouTube Specific ─────────────────────────────────────────────────────────
 
+import {
+  parseYouTubeCandidatesFromInitialData,
+  selectBestYouTubeCandidate,
+  executeYouTubeCommentDOM,
+  type YouTubeMediaSubtype,
+  type YouTubeCandidate,
+} from "./youtubeIntelligence.js";
+
 interface ResolvedYouTubeVideo {
   url: string;
   title: string;
+  videoId?: string;
+  channelName?: string;
+  channelVerified?: boolean;
+  selectionReason?: string;
+  errorCode?: string;
 }
 
-async function resolveYouTubeVideoViaFetch(query: string): Promise<ResolvedYouTubeVideo | null> {
+async function resolveYouTubeVideoViaFetch(
+  query: string,
+  subtype: YouTubeMediaSubtype = "video",
+  requestedChannel?: string
+): Promise<ResolvedYouTubeVideo | null> {
   try {
     const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
     const controller = new AbortController();
@@ -239,45 +256,53 @@ async function resolveYouTubeVideoViaFetch(query: string): Promise<ResolvedYouTu
     if (!res.ok) return null;
     const html = await res.text();
 
-    // 1. Try extracting structured video data from ytInitialData
+    // 1. Extract structured candidates from ytInitialData and evaluate with YouTube intelligence
     const jsonMatch = html.match(/var ytInitialData\s*=\s*(\{[\s\S]*?\});<\/script>/);
     if (jsonMatch && jsonMatch[1]) {
       try {
         const data = JSON.parse(jsonMatch[1]);
-        const sections =
-          data.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents;
-        if (Array.isArray(sections)) {
-          for (const section of sections) {
-            const items = section.itemSectionRenderer?.contents;
-            if (Array.isArray(items)) {
-              for (const item of items) {
-                const vr = item.videoRenderer;
-                if (vr && vr.videoId) {
-                  const title =
-                    vr.title?.runs?.map((r: { text?: string }) => r.text || "").join("") ||
-                    vr.title?.simpleText ||
-                    "";
-                  return {
-                    url: `https://www.youtube.com/watch?v=${vr.videoId}`,
-                    title: title.trim(),
-                  };
-                }
-              }
-            }
+        const candidates: YouTubeCandidate[] = parseYouTubeCandidatesFromInitialData(data);
+        if (candidates.length > 0) {
+          const selection = selectBestYouTubeCandidate(candidates, {
+            query,
+            subtype,
+            requestedChannel,
+          });
+          if (selection.selected) {
+            return {
+              url: selection.selected.url,
+              title: selection.selected.title,
+              videoId: selection.selected.videoId,
+              channelName: selection.selected.channelName,
+              channelVerified: selection.channelVerified,
+              selectionReason: selection.reason,
+            };
+          }
+          if (selection.errorCode) {
+            return {
+              url: "",
+              title: "",
+              channelVerified: selection.channelVerified,
+              selectionReason: selection.reason,
+              errorCode: selection.errorCode,
+            };
           }
         }
       } catch {
-        /* fallback to regex parsing */
+        /* fallback to regex parsing for generic video */
       }
     }
 
-    // 2. Fallback to direct regex search on watch links inside the raw HTML
-    const videoIdMatch = html.match(/\/watch\?v=([a-zA-Z0-9_-]{11})/);
-    if (videoIdMatch && videoIdMatch[1]) {
-      return {
-        url: `https://www.youtube.com/watch?v=${videoIdMatch[1]}`,
-        title: query,
-      };
+    // 2. Fallback to direct regex search ONLY when subtype is generic "video"
+    if (subtype === "video") {
+      const videoIdMatch = html.match(/\/watch\?v=([a-zA-Z0-9_-]{11})/);
+      if (videoIdMatch && videoIdMatch[1]) {
+        return {
+          url: `https://www.youtube.com/watch?v=${videoIdMatch[1]}`,
+          title: query,
+          videoId: videoIdMatch[1],
+        };
+      }
     }
   } catch {
     /* ignore and fall through to Playwright or search URL fallback */
@@ -288,13 +313,50 @@ async function resolveYouTubeVideoViaFetch(query: string): Promise<ResolvedYouTu
 async function postYouTubeCommentIfRequested(
   comment: string | undefined,
   videoTitle: string,
-  approved?: boolean
+  approved?: boolean,
+  videoId?: string
 ): Promise<string> {
   const cleanComment = comment?.trim();
   if (!cleanComment) return "";
 
   if (approved === false) {
     return ` (comment "${cleanComment}" cancelled: User rejected YouTube comment publication)`;
+  }
+
+  // Hierarchy: DOM/MCP first when browserSessionManager has an active CDP/Playwright page, then Desktop CUA
+  try {
+    const { isCDPAvailable } = await import("../../mcp/browser/browserClient.js");
+    const cdpUp = await isCDPAvailable().catch(() => false);
+    if (cdpUp) {
+      const { browserSessionManager } = await import("../../mcp/browser/sessionManager.js");
+      const domOutcome = await browserSessionManager.executeOnPage(async (page) => {
+        if (videoId && !page.url().includes(videoId)) {
+          await page.goto(`https://www.youtube.com/watch?v=${videoId}`, {
+            waitUntil: "domcontentloaded",
+            timeout: 15000,
+          });
+        }
+        return executeYouTubeCommentDOM(page, {
+          commentText: cleanComment,
+          expectedVideoId: videoId,
+          expectedTitle: videoTitle,
+          approved,
+        });
+      });
+      if (domOutcome.status === "AWAITING_APPROVAL") {
+        return ` (composed comment "${cleanComment}" — AWAITING_APPROVAL before publishing)`;
+      }
+      if (domOutcome.status === "SUCCESS" && domOutcome.verified) {
+        return ` and commented "${cleanComment}"`;
+      }
+      if (domOutcome.loggedOut || domOutcome.commentsDisabled) {
+        return ` (could not post comment "${cleanComment}": ${domOutcome.error})`;
+      }
+    }
+  } catch (domErr) {
+    log.debug("[YOUTUBE_COMMENT] DOM path unavailable, falling back to Desktop CUA", {
+      error: domErr instanceof Error ? domErr.message : String(domErr),
+    });
   }
 
   try {
@@ -327,10 +389,11 @@ async function postYouTubeCommentIfRequested(
 
 export async function playYouTube(
   query: string,
-  action: "play" | "search" = "play",
+  action: "play" | "search" | "comment" = "play",
   selection: "first" = "first",
   comment?: string,
-  approved?: boolean
+  approved?: boolean,
+  mediaSubtype: YouTubeMediaSubtype = "video"
 ): Promise<string> {
   const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
   console.log("[LAUNCH TRACE]", "src/tools/laptop/computer.ts", "playYouTube", {
@@ -339,6 +402,7 @@ export async function playYouTube(
     selection,
     comment,
     approved,
+    mediaSubtype,
     searchUrl,
   });
 
@@ -347,13 +411,21 @@ export async function playYouTube(
     return `Searched YouTube for "${query}".`;
   }
 
-  // 1. Ultra-fast path: resolve the watch link directly in ~300ms without spinning up headless Chromium
-  const fastVideo = await resolveYouTubeVideoViaFetch(query);
+  // 1. Ultra-fast path: resolve & evaluate candidates via YouTube intelligence
+  const fastVideo = await resolveYouTubeVideoViaFetch(query, mediaSubtype);
+  if (fastVideo && fastVideo.errorCode && !fastVideo.url) {
+    // Do NOT silently substitute an unrelated video when strict live/livestream verification failed
+    log.warn("[YOUTUBE_PLAY] Candidate evaluation rejected mismatch", {
+      errorCode: fastVideo.errorCode,
+      reason: fastVideo.selectionReason,
+    });
+    return `Could not verify a matching ${mediaSubtype.replace(/_/g, " ")} for "${query}": ${fastVideo.selectionReason}`;
+  }
   if (fastVideo && fastVideo.url) {
     log.info(`[YOUTUBE_PLAY] Fast-resolved video watch URL: ${fastVideo.url} (${fastVideo.title})`);
     await openUrl(fastVideo.url);
     const videoTitle = fastVideo.title && fastVideo.title.length > 0 ? fastVideo.title : `first ${query} video`;
-    const commentSuffix = await postYouTubeCommentIfRequested(comment, videoTitle, approved);
+    const commentSuffix = await postYouTubeCommentIfRequested(comment, videoTitle, approved, fastVideo.videoId);
     return `Playing "${videoTitle}" on YouTube${commentSuffix}.`;
   }
 

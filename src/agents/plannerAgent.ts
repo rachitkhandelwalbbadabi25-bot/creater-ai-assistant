@@ -3,10 +3,15 @@ import { nowMs, logPerf } from "@utils/perf.js";
 import { createLogger } from "@utils/logger.js";
 import type { AgentSharedContext } from "../orchestration/agentSharedContext.js";
 import type { AgentResult } from "../orchestration/agentBus.js";
+import {
+  decomposeTask,
+  validateExecutionPlan,
+  type UniversalExecutionPlan,
+} from "../orchestration/universalPlan.js";
 
 /**
  * Planner Agent – parses a user goal, estimates complexity, selects required agents, and
- * produces an ordered list of execution steps.
+ * produces an ordered list of execution steps plus a structured UniversalExecutionPlan.
  */
 export interface PlannerInput {
   userGoal: string;
@@ -17,6 +22,7 @@ export interface PlannerOutput {
   complexity: "low" | "medium" | "high";
   requiredAgents: string[];
   steps: string[];
+  universalPlan?: UniversalExecutionPlan;
 }
 
 const log = createLogger("[PLANNER]");
@@ -95,13 +101,23 @@ export async function plannerAgent(context: AgentSharedContext & { userGoal: str
   const complexity = estimateComplexity(userGoal);
   log.info('[PLANNER_AGENT_AFTER_COMPLEXITY]', { complexity });
   const requiredAgents = selectAgents(complexity);
-  const steps = generateSteps(userGoal, requiredAgents);
-  log.info('[PLANNER_AGENT_AFTER_STEPS]', { stepsCount: steps.length });
+  const universalPlan = decomposeTask(userGoal);
+  const validation = validateExecutionPlan(universalPlan);
+  if (!validation.valid) {
+    log.warn("[PLANNER_VALIDATION_WARNINGS]", { errors: validation.errors });
+  }
+  const legacySteps = generateSteps(userGoal, requiredAgents);
+  const steps =
+    universalPlan.actions.length > 1 && legacySteps[0]?.startsWith("process goal:")
+      ? universalPlan.actions.map((a) => a.expectedOutcome)
+      : legacySteps;
+  log.info('[PLANNER_AGENT_AFTER_STEPS]', { stepsCount: steps.length, universalActions: universalPlan.actions.length });
   const output: PlannerOutput = {
     goal: userGoal,
     complexity,
     requiredAgents,
     steps,
+    universalPlan,
   };
   logPerf(log, "Planner completed", started, { complexity, agents: requiredAgents.length });
   log.info('[PLANNER_AGENT_RETURN]');

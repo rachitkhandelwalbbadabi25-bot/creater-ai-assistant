@@ -598,8 +598,61 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
         }
 
         if (fastCommand.kind === "youtube") {
+          const { decomposeTask } = await import("../orchestration/universalPlan.js");
+          const { getTaskContext, setActiveTarget } = await import("../conversation/taskContextStore.js");
+          const { setPendingActionApproval } = await import("../conversation/pendingIntentStore.js");
+
+          const sessionCtx = getTaskContext(state.channel, state.sessionId);
+          const plan = decomposeTask(fastCommand.raw, { activeTarget: sessionCtx?.activeTarget });
           const query = fastCommand.query;
           const action = fastCommand.action || "play";
+          const mediaSubtype = fastCommand.mediaSubtype || "video";
+
+          // Standalone comment on active target (e.g. "Comment Carry bhai big fan on this video")
+          if (action === "comment" && !query) {
+            const activeTarget = sessionCtx?.activeTarget;
+            if (!activeTarget || (!activeTarget.url && !activeTarget.title)) {
+              const askMsg = "Which video would you like me to comment on? Please specify the video or play it first.";
+              state.onToken?.(askMsg);
+              addMessage("assistant", askMsg, state.channel);
+              return { ...state, response: askMsg, currentStep: "done" };
+            }
+            const commentText = fastCommand.comment || "";
+            if (!commentText) {
+              const askMsg = `What comment should I post on "${activeTarget.title || activeTarget.url}"?`;
+              state.onToken?.(askMsg);
+              addMessage("assistant", askMsg, state.channel);
+              return { ...state, response: askMsg, currentStep: "done" };
+            }
+
+            setPendingActionApproval(state.channel, {
+              intent: "ACTION_APPROVAL",
+              actionType: "youtube.comment",
+              platform: "youtube",
+              target: activeTarget.url || activeTarget.title || "youtube",
+              targetUrl: activeTarget.url,
+              targetTitle: activeTarget.title,
+              params: { commentText, mediaSubtype },
+              approvalState: "pending",
+              expiresAt: Date.now() + 5 * 60 * 1000,
+              createdAt: Date.now(),
+            });
+
+            const approvalMsg = `Prepared comment "${commentText}" on "${activeTarget.title || activeTarget.url}". Reply "yes" or "approve" to publish, or "cancel" to abort.`;
+            state.onToken?.(approvalMsg);
+            addMessage("assistant", approvalMsg, state.channel);
+            return {
+              ...state,
+              response: approvalMsg,
+              requiresConfirmation: true,
+              pendingConfirmation: {
+                toolId: "youtube.comment",
+                params: { commentText, targetUrl: activeTarget.url },
+                reason: "Public YouTube comment requires explicit user approval.",
+              },
+              currentStep: "done",
+            };
+          }
 
           if (!query) {
             const feedback = "Opening YouTube...";
@@ -610,15 +663,47 @@ export async function laptopAgentNode(state: GraphState): Promise<GraphState> {
           }
 
           try {
-            const commentNote = fastCommand.comment ? ` and commenting "${fastCommand.comment}"` : "";
-            state.onToken?.(`🎵 Playing "${query}" on YouTube${commentNote}...\n`);
+            const commentNote = fastCommand.comment ? ` and preparing comment "${fastCommand.comment}"` : "";
+            state.onToken?.(`🎵 Resolving "${query}" (${mediaSubtype.replace(/_/g, " ")}) on YouTube${commentNote}...\n`);
             const result = (await dispatchTool("computer.play_youtube", {
               query,
-              action,
+              action: action === "comment" ? "play" : action,
               selection: fastCommand.selection || "first",
+              mediaSubtype,
               ...(fastCommand.comment ? { comment: fastCommand.comment } : {}),
             })) as string | { message?: string };
             const responseMsg = typeof result === "string" ? result : result.message || `Completed YouTube ${action} for "${query}".`;
+
+            // Persist target context for follow-ups ("comment on this video")
+            const titleMatch = responseMsg.match(/Playing "([^"]+)" on YouTube/);
+            if (titleMatch && titleMatch[1]) {
+              setActiveTarget(
+                state.channel,
+                {
+                  targetType: "youtube_video",
+                  title: titleMatch[1],
+                  channelName: query,
+                  verified: true,
+                },
+                state.sessionId
+              );
+            }
+
+            // If comment is awaiting approval, register it in pendingIntentStore
+            if (fastCommand.comment && /AWAITING_APPROVAL/i.test(responseMsg)) {
+              setPendingActionApproval(state.channel, {
+                intent: "ACTION_APPROVAL",
+                actionType: "youtube.comment",
+                platform: "youtube",
+                target: titleMatch?.[1] || query,
+                targetTitle: titleMatch?.[1] || query,
+                params: { commentText: fastCommand.comment, mediaSubtype, planId: plan.planId },
+                approvalState: "pending",
+                expiresAt: Date.now() + 5 * 60 * 1000,
+                createdAt: Date.now(),
+              });
+            }
+
             state.onToken?.(responseMsg);
             addMessage("assistant", responseMsg, state.channel);
             return { ...state, response: responseMsg, currentStep: "done" };
